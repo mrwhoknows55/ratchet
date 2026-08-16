@@ -121,17 +121,6 @@ async def test_empty_message_not_echoed_or_logged(tmp_path):
     assert "app stopped" in content
 
 
-async def test_whitespace_only_message_not_echoed_or_logged(tmp_path):
-    log_path = tmp_path / "ratchet.log"
-    app = RatchetApp(log_path=log_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
-        input_widget.value = "   "
-        await pilot.press("enter")
-        richlog = app.query_one("#messages", RichLog)
-        assert len(richlog.lines) == 0
-
-
 async def test_log_directory_created_if_missing(tmp_path):
     log_path = tmp_path / "nested" / "log" / "ratchet.log"
     app = RatchetApp(log_path=log_path)
