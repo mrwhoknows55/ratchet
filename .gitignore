@@ -16,3 +16,6 @@ wheels/
 
 # Env files
 .env
+
+# Runtime logs
+log/

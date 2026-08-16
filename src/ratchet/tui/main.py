@@ -1,14 +1,46 @@
+from datetime import datetime
+from pathlib import Path
+
 from textual.app import App, ComposeResult
-from textual.widgets import Footer, Header, Static
+from textual.binding import Binding
+from textual.widgets import Footer, Header, Input, RichLog
+
+DEFAULT_LOG_PATH = Path("log/ratchet.log")
 
 
 class RatchetApp(App):
-    BINDINGS = [("q", "quit", "Quit")]
+    BINDINGS = [Binding("ctrl+q", "quit", "Quit", priority=True)]
+
+    def __init__(self, log_path: Path = DEFAULT_LOG_PATH) -> None:
+        super().__init__()
+        self.log_path = log_path
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Static("hello from ratchet", id="body")
+        yield RichLog(id="messages")
+        yield Input(id="message_input")
         yield Footer()
+
+    def on_mount(self) -> None:
+        self._write_log("app launched")
+        self.query_one("#message_input", Input).focus()
+
+    def on_unmount(self) -> None:
+        self._write_log("app stopped")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        text = event.value
+        if not text.strip():
+            return
+        self.query_one("#messages", RichLog).write(text)
+        self._write_log(text)
+        event.input.value = ""
+
+    def _write_log(self, message: str) -> None:
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        with self.log_path.open("a", encoding="utf-8") as f:
+            f.write(f"{timestamp} {message}\n")
 
 
 def main() -> None:
