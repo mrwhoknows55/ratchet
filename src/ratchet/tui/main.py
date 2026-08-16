@@ -9,7 +9,10 @@ DEFAULT_LOG_PATH = Path("log/ratchet.log")
 
 
 class RatchetApp(App):
-    BINDINGS = [Binding("ctrl+q", "quit", "Quit", priority=True)]
+    BINDINGS = [
+        Binding("ctrl+q", "quit", "Quit", priority=True),
+        Binding("ctrl+l", "clear_log", "Clear Log"),
+    ]
 
     def __init__(self, log_path: Path = DEFAULT_LOG_PATH) -> None:
         super().__init__()
@@ -41,6 +44,10 @@ class RatchetApp(App):
         timestamp = datetime.now().isoformat(timespec="seconds")
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(f"{timestamp} {message}\n")
+
+    def action_clear_log(self) -> None:
+        self.query_one("#messages", RichLog).clear()
+        self._write_log("log cleared")
 
 
 def main() -> None:

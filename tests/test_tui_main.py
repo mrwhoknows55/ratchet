@@ -146,3 +146,44 @@ async def test_app_stopped_logged_on_unmount(tmp_path):
         pass
     content = log_path.read_text()
     assert re.search(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} app stopped$", content, re.MULTILINE)
+
+
+async def test_ctrl_l_clears_message_log(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "hello there"
+        await pilot.press("enter")
+        richlog = app.query_one("#messages", RichLog)
+        assert len(richlog.lines) > 0
+        await pilot.press("ctrl+l")
+        assert len(richlog.lines) == 0
+
+
+async def test_ctrl_l_on_empty_log_does_not_error(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        richlog = app.query_one("#messages", RichLog)
+        await pilot.press("ctrl+l")
+        assert app.is_running
+        assert len(richlog.lines) == 0
+
+
+async def test_ctrl_l_does_not_clear_input_value(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "not yet submitted"
+        await pilot.press("ctrl+l")
+        assert input_widget.value == "not yet submitted"
+
+
+async def test_ctrl_l_logged_to_file(tmp_path):
+    log_path = tmp_path / "ratchet.log"
+    app = RatchetApp(log_path=log_path)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+l")
+    content = log_path.read_text()
+    assert re.search(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} log cleared$", content, re.MULTILINE)
