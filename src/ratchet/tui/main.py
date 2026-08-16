@@ -5,18 +5,45 @@ from pathlib import Path
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, Header, Input, RichLog
+from textual.screen import ModalScreen
+from textual.widgets import Footer, Header, Input, OptionList, RichLog
+from textual.widgets.option_list import Option
 
 from ratchet.agent.client import call_llm
+from ratchet.agent.config import load_config
+from ratchet.agent.models import load_supported_models
 from ratchet.shell.executor import run_command
 
 DEFAULT_LOG_PATH = Path("log/ratchet.log")
 
 
+class ModelPickerScreen(ModalScreen[str]):
+    def __init__(self, models: dict[str, dict[str, str]]) -> None:
+        super().__init__()
+        self._models = models
+
+    def compose(self) -> ComposeResult:
+        yield OptionList(
+            *(
+                Option(config["name"], id=alias)
+                for alias, config in self._models.items()
+            )
+        )
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option_id)
+
+
 class RatchetApp(App):
+    ENABLE_COMMAND_PALETTE = False
+
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+l", "clear_log", "Clear Log"),
+        Binding("ctrl+p", "pick_model", "Pick Model"),
     ]
 
     def __init__(
@@ -29,6 +56,7 @@ class RatchetApp(App):
         self.log_path = log_path
         self.mode = mode
         self.sandbox_root = sandbox_root or (Path.cwd() / "sandbox")
+        self.selected_model: dict[str, str] | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -39,6 +67,11 @@ class RatchetApp(App):
     def on_mount(self) -> None:
         self.sub_title = "shell mode" if self.mode == "shell" else ""
         self._write_log("app launched")
+        if self.mode != "shell":
+            model_name = load_config().get("model", {}).get("name", "unknown")
+            message = f"model: {model_name}"
+            self.query_one("#messages", RichLog).write(message)
+            self._write_log(message)
         self.query_one("#message_input", Input).focus()
 
     def on_unmount(self) -> None:
@@ -61,7 +94,10 @@ class RatchetApp(App):
             output = (result["stdout"] + result["stderr"]).strip() or "(no output)"
             message = f"shell: {output} [exit {result['exit_code']}]"
         else:
-            result = await asyncio.to_thread(call_llm, [{"role": "user", "content": text}])
+            override_config = {"model": self.selected_model} if self.selected_model else None
+            result = await asyncio.to_thread(
+                call_llm, [{"role": "user", "content": text}], override_config
+            )
             message = f"assistant: {result['content']}"
         self.query_one("#messages", RichLog).write(message)
         self._write_log(message)
@@ -75,6 +111,20 @@ class RatchetApp(App):
     def action_clear_log(self) -> None:
         self.query_one("#messages", RichLog).clear()
         self._write_log("log cleared")
+
+    def action_pick_model(self) -> None:
+        self._pick_model()
+
+    @work
+    async def _pick_model(self) -> None:
+        models = load_supported_models()
+        alias = await self.push_screen_wait(ModelPickerScreen(models))
+        if not alias:
+            return
+        self.selected_model = models[alias]
+        message = f"model set to {self.selected_model['name']}"
+        self.query_one("#messages", RichLog).write(message)
+        self._write_log(message)
 
 
 def main(mode: str = "chat") -> None:

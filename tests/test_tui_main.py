@@ -3,8 +3,25 @@ import re
 import pytest
 from textual.widgets import Footer, Header, Input, RichLog
 
+from ratchet.agent import config as agent_config
 from ratchet.tui import main as tui_main
 from ratchet.tui.main import RatchetApp
+
+TEST_CONFIG_TOML = """
+[model]
+provider = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+name = "anthropic/claude-sonnet-5"
+api_key = "not-needed"
+timeout = 20
+
+[models.claude]
+name = "anthropic/claude-sonnet-5"
+
+[models.lmstudio]
+name = "liquid/lfm2.5-1.2b"
+base_url = "http://localhost:1234/v1"
+"""
 
 
 def make_app(tmp_path):
@@ -18,6 +35,13 @@ def _stub_call_llm(monkeypatch):
 
     monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
     return fake_call_llm
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_file(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(TEST_CONFIG_TOML)
+    monkeypatch.setattr(agent_config, "CONFIG_FILE", config_file)
 
 
 async def test_app_has_header_and_footer(tmp_path):
@@ -113,11 +137,12 @@ async def test_empty_message_not_echoed_or_logged(tmp_path):
     log_path = tmp_path / "ratchet.log"
     app = RatchetApp(log_path=log_path)
     async with app.run_test() as pilot:
+        richlog = app.query_one("#messages", RichLog)
+        lines_before = len(richlog.lines)
         input_widget = app.query_one("#message_input", Input)
         input_widget.value = ""
         await pilot.press("enter")
-        richlog = app.query_one("#messages", RichLog)
-        assert len(richlog.lines) == 0
+        assert len(richlog.lines) == lines_before
     content = log_path.read_text()
     assert "app launched" in content
     assert "app stopped" in content
@@ -138,6 +163,14 @@ async def test_app_launched_logged_on_mount(tmp_path):
         content = log_path.read_text()
         pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} app launched$"
         assert re.search(pattern, content, re.MULTILINE)
+
+
+async def test_active_model_name_printed_on_launch(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test():
+        richlog = app.query_one("#messages", RichLog)
+        lines = [strip.text for strip in richlog.lines]
+        assert any("model: anthropic/claude-sonnet-5" in line for line in lines)
 
 
 async def test_app_stopped_logged_on_unmount(tmp_path):
@@ -297,6 +330,57 @@ async def test_shell_mode_denies_path_outside_sandbox(tmp_path):
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
         assert any("Access Denied" in line for line in lines)
+
+
+async def test_model_picker_options_show_full_model_names(tmp_path):
+    from textual.widgets import OptionList
+
+    from ratchet.tui.main import ModelPickerScreen
+
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ModelPickerScreen)
+        option_list = screen.query_one(OptionList)
+        prompts = {
+            option_list.get_option_at_index(i).prompt
+            for i in range(option_list.option_count)
+        }
+        assert prompts == {"anthropic/claude-sonnet-5", "liquid/lfm2.5-1.2b"}
+
+
+async def test_ctrl_p_pick_model_sets_selected_model_and_confirms(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        await pilot.press("enter")
+        assert app.selected_model == {"name": "anthropic/claude-sonnet-5"}
+        richlog = app.query_one("#messages", RichLog)
+        lines = [strip.text for strip in richlog.lines]
+        assert any("model set to anthropic/claude-sonnet-5" in line for line in lines)
+
+
+async def test_chat_message_after_pick_uses_selected_model_override(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_call_llm(messages, override_config=None):
+        calls.append(override_config)
+        return {"content": "mock-reply", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+p")
+        await pilot.press("enter")
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        assert calls[-1] == {"model": {"name": "anthropic/claude-sonnet-5"}}
 
 
 async def test_user_message_logged_before_reply_worker_completes(tmp_path):

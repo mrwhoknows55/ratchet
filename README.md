@@ -11,11 +11,10 @@ AI harness written in Python for local models via LM Studio.
 - Messages logged to file with timestamps, prefixed by `user:` / `assistant:` role
 - Sandboxed shell mode (`uv run ratchet shell`) for running commands scoped to a `./sandbox` directory
 
-See [`docs/capabilities.md`](docs/capabilities.md) for the chat-mode checklist
-of what's working vs. not yet, [`docs/model-comparison.md`](docs/model-comparison.md)
-for comparing the local model against online models, and
+See [`docs/model-comparison.md`](docs/model-comparison.md) for comparing the
+local model against online models, and
 [`docs/shell-commands.md`](docs/shell-commands.md) for the shell mode
-commands checklist and its sandbox limitations.
+commands checklist.
 
 ## Setup
 
