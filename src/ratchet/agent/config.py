@@ -1,7 +1,10 @@
 import tomllib
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 CONFIG_FILE = Path(__file__).parent.parent.parent.parent / "config.toml"
+ENV_FILE = Path(__file__).parent.parent.parent.parent / ".env"
 
 DEFAULT_CONFIG = {
     "model": {
@@ -15,6 +18,8 @@ DEFAULT_CONFIG = {
 
 
 def load_config() -> dict:
+    if ENV_FILE.exists():
+        load_dotenv(ENV_FILE)
     if CONFIG_FILE.exists():
         try:
             data = tomllib.loads(CONFIG_FILE.read_text())

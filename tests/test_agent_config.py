@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -56,3 +57,33 @@ def test_load_config_returns_defaults_on_empty_file():
 def test_load_config_path_is_project_root_config_toml():
     assert agent_config.CONFIG_FILE.name == "config.toml"
     assert isinstance(agent_config.CONFIG_FILE, Path)
+
+
+def test_load_config_loads_api_key_from_env_file(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("OPENAI_API_KEY=sk-or-test-123\n")
+    monkeypatch.setattr(agent_config, "ENV_FILE", env_file)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    agent_config.load_config()
+
+    assert os.environ.get("OPENAI_API_KEY") == "sk-or-test-123"
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+
+def test_load_config_does_not_override_existing_env_var(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("OPENAI_API_KEY=sk-or-from-dotenv\n")
+    monkeypatch.setattr(agent_config, "ENV_FILE", env_file)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-or-from-shell")
+
+    agent_config.load_config()
+
+    assert os.environ["OPENAI_API_KEY"] == "sk-or-from-shell"
+
+
+def test_load_config_handles_missing_env_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_config, "ENV_FILE", tmp_path / ".env")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    assert agent_config.load_config() == {"model": DEFAULT_MODEL_CONFIG}

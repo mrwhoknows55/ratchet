@@ -8,6 +8,7 @@ from ratchet.agent import config as agent_config
 @pytest.fixture(autouse=True)
 def _isolate_config_path(monkeypatch, tmp_path):
     monkeypatch.setattr(agent_config, "CONFIG_FILE", tmp_path / "config.toml")
+    monkeypatch.setattr(agent_config, "ENV_FILE", tmp_path / ".env")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
