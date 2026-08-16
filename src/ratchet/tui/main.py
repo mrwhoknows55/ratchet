@@ -8,6 +8,7 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header, Input, RichLog
 
 from ratchet.agent.client import call_llm
+from ratchet.shell.executor import run_command
 
 DEFAULT_LOG_PATH = Path("log/ratchet.log")
 
@@ -18,9 +19,16 @@ class RatchetApp(App):
         Binding("ctrl+l", "clear_log", "Clear Log"),
     ]
 
-    def __init__(self, log_path: Path = DEFAULT_LOG_PATH) -> None:
+    def __init__(
+        self,
+        log_path: Path = DEFAULT_LOG_PATH,
+        mode: str = "chat",
+        sandbox_root: Path | None = None,
+    ) -> None:
         super().__init__()
         self.log_path = log_path
+        self.mode = mode
+        self.sandbox_root = sandbox_root or (Path.cwd() / "sandbox")
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -29,6 +37,7 @@ class RatchetApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.sub_title = "shell mode" if self.mode == "shell" else ""
         self._write_log("app launched")
         self.query_one("#message_input", Input).focus()
 
@@ -47,8 +56,13 @@ class RatchetApp(App):
 
     @work
     async def _request_reply(self, text: str) -> None:
-        result = await asyncio.to_thread(call_llm, [{"role": "user", "content": text}])
-        message = f"assistant: {result['content']}"
+        if self.mode == "shell":
+            result = await asyncio.to_thread(run_command, text, self.sandbox_root)
+            output = (result["stdout"] + result["stderr"]).strip() or "(no output)"
+            message = f"shell: {output} [exit {result['exit_code']}]"
+        else:
+            result = await asyncio.to_thread(call_llm, [{"role": "user", "content": text}])
+            message = f"assistant: {result['content']}"
         self.query_one("#messages", RichLog).write(message)
         self._write_log(message)
 
@@ -63,8 +77,8 @@ class RatchetApp(App):
         self._write_log("log cleared")
 
 
-def main() -> None:
-    RatchetApp().run()
+def main(mode: str = "chat") -> None:
+    RatchetApp(mode=mode).run()
 
 
 if __name__ == "__main__":

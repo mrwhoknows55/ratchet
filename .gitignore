@@ -19,3 +19,6 @@ wheels/
 
 # Runtime logs
 log/
+
+# Shell mode sandbox
+sandbox/

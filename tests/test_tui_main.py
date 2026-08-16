@@ -262,6 +262,43 @@ async def test_error_reply_content_is_still_displayed(tmp_path, monkeypatch):
         assert any("[API Error] boom" in line for line in lines)
 
 
+async def test_shell_mode_defaults_sandbox_root_to_cwd_sandbox_subdir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", mode="shell")
+    assert app.sandbox_root == tmp_path / "sandbox"
+
+
+async def test_shell_mode_executes_command_and_displays_output(tmp_path):
+    (tmp_path / "sample.txt").write_text("hello sandbox")
+    app = RatchetApp(
+        log_path=tmp_path / "ratchet.log", mode="shell", sandbox_root=tmp_path
+    )
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "cat sample.txt"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        richlog = app.query_one("#messages", RichLog)
+        lines = [strip.text for strip in richlog.lines]
+        assert any("hello sandbox" in line and "exit 0" in line for line in lines)
+
+
+async def test_shell_mode_denies_path_outside_sandbox(tmp_path):
+    app = RatchetApp(
+        log_path=tmp_path / "ratchet.log", mode="shell", sandbox_root=tmp_path
+    )
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "cat /etc/passwd"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        richlog = app.query_one("#messages", RichLog)
+        lines = [strip.text for strip in richlog.lines]
+        assert any("Access Denied" in line for line in lines)
+
+
 async def test_user_message_logged_before_reply_worker_completes(tmp_path):
     log_path = tmp_path / "ratchet.log"
     app = RatchetApp(log_path=log_path)
