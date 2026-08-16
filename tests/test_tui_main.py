@@ -66,7 +66,7 @@ async def test_submitted_message_echoes_to_display(tmp_path):
         await pilot.press("enter")
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
-        assert any("hello there" in line for line in lines)
+        assert any("user: hello there" in line for line in lines)
 
 
 async def test_submitted_message_clears_input(tmp_path):
@@ -88,7 +88,9 @@ async def test_submitted_message_written_to_log_file(tmp_path):
         input_widget.value = "hello there"
         await pilot.press("enter")
     content = log_path.read_text()
-    assert re.search(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} hello there$", content, re.MULTILINE)
+    assert re.search(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} user: hello there$", content, re.MULTILINE
+    )
 
 
 async def test_multiple_messages_appended_in_order(tmp_path):
@@ -198,7 +200,7 @@ async def test_agent_reply_written_to_display(tmp_path):
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
-        assert any("mock-reply" in line for line in lines)
+        assert any("assistant: mock-reply" in line for line in lines)
 
 
 async def test_agent_reply_written_to_log_file(tmp_path):
@@ -211,7 +213,9 @@ async def test_agent_reply_written_to_log_file(tmp_path):
         await pilot.press("enter")
         await app.workers.wait_for_complete()
     content = log_path.read_text()
-    assert re.search(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} mock-reply$", content, re.MULTILINE)
+    assert re.search(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} assistant: mock-reply$", content, re.MULTILINE
+    )
 
 
 async def test_offline_reply_content_is_still_displayed(tmp_path, monkeypatch):
@@ -268,6 +272,6 @@ async def test_user_message_logged_before_reply_worker_completes(tmp_path):
         await pilot.press("enter")
         content = log_path.read_text()
         assert re.search(
-            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} hello there$", content, re.MULTILINE
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} user: hello there$", content, re.MULTILINE
         )
         await app.workers.wait_for_complete()

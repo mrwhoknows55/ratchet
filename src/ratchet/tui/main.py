@@ -39,16 +39,18 @@ class RatchetApp(App):
         text = event.value
         if not text.strip():
             return
-        self.query_one("#messages", RichLog).write(text)
-        self._write_log(text)
+        message = f"user: {text}"
+        self.query_one("#messages", RichLog).write(message)
+        self._write_log(message)
         event.input.value = ""
         self._request_reply(text)
 
     @work
     async def _request_reply(self, text: str) -> None:
         result = await asyncio.to_thread(call_llm, [{"role": "user", "content": text}])
-        self.query_one("#messages", RichLog).write(result["content"])
-        self._write_log(result["content"])
+        message = f"assistant: {result['content']}"
+        self.query_one("#messages", RichLog).write(message)
+        self._write_log(message)
 
     def _write_log(self, message: str) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
