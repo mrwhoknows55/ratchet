@@ -1,12 +1,23 @@
 import re
 
+import pytest
 from textual.widgets import Footer, Header, Input, RichLog
 
+from ratchet.tui import main as tui_main
 from ratchet.tui.main import RatchetApp
 
 
 def make_app(tmp_path):
     return RatchetApp(log_path=tmp_path / "ratchet.log")
+
+
+@pytest.fixture(autouse=True)
+def _stub_call_llm(monkeypatch):
+    def fake_call_llm(messages, override_config=None):
+        return {"content": "mock-reply", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    return fake_call_llm
 
 
 async def test_app_has_header_and_footer(tmp_path):
@@ -89,12 +100,11 @@ async def test_multiple_messages_appended_in_order(tmp_path):
         for text in ["first", "second"]:
             input_widget.value = text
             await pilot.press("enter")
+        await app.workers.wait_for_complete()
     lines = log_path.read_text().splitlines()
-    message_lines = [
-        line for line in lines if "app launched" not in line and "app stopped" not in line
-    ]
-    assert message_lines[0].endswith("first")
-    assert message_lines[1].endswith("second")
+    user_lines = [line for line in lines if line.endswith("first") or line.endswith("second")]
+    assert user_lines[0].endswith("first")
+    assert user_lines[1].endswith("second")
 
 
 async def test_empty_message_not_echoed_or_logged(tmp_path):
@@ -187,3 +197,88 @@ async def test_ctrl_l_logged_to_file(tmp_path):
         await pilot.press("ctrl+l")
     content = log_path.read_text()
     assert re.search(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} log cleared$", content, re.MULTILINE)
+
+
+async def test_agent_reply_written_to_display(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        richlog = app.query_one("#messages", RichLog)
+        lines = [strip.text for strip in richlog.lines]
+        assert any("mock-reply" in line for line in lines)
+
+
+async def test_agent_reply_written_to_log_file(tmp_path):
+    log_path = tmp_path / "ratchet.log"
+    app = RatchetApp(log_path=log_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+    content = log_path.read_text()
+    assert re.search(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} mock-reply$", content, re.MULTILINE)
+
+
+async def test_offline_reply_content_is_still_displayed(tmp_path, monkeypatch):
+    def fake_call_llm(messages, override_config=None):
+        return {
+            "content": "[LM Studio Offline] Could not connect to local server.",
+            "model": "test-model",
+            "status": "offline",
+            "error": "connection refused",
+        }
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        richlog = app.query_one("#messages", RichLog)
+        lines = [strip.text for strip in richlog.lines]
+        assert any("LM Studio Offline" in line for line in lines)
+
+
+async def test_error_reply_content_is_still_displayed(tmp_path, monkeypatch):
+    def fake_call_llm(messages, override_config=None):
+        return {
+            "content": "[API Error] boom",
+            "model": "test-model",
+            "status": "error",
+            "error": "boom",
+        }
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        richlog = app.query_one("#messages", RichLog)
+        lines = [strip.text for strip in richlog.lines]
+        assert any("[API Error] boom" in line for line in lines)
+
+
+async def test_user_message_logged_before_reply_worker_completes(tmp_path):
+    log_path = tmp_path / "ratchet.log"
+    app = RatchetApp(log_path=log_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "hello there"
+        await pilot.press("enter")
+        content = log_path.read_text()
+        assert re.search(
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} hello there$", content, re.MULTILINE
+        )
+        await app.workers.wait_for_complete()

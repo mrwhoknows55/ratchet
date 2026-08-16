@@ -1,9 +1,13 @@
+import asyncio
 from datetime import datetime
 from pathlib import Path
 
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, Input, RichLog
+
+from ratchet.agent.client import call_llm
 
 DEFAULT_LOG_PATH = Path("log/ratchet.log")
 
@@ -38,6 +42,13 @@ class RatchetApp(App):
         self.query_one("#messages", RichLog).write(text)
         self._write_log(text)
         event.input.value = ""
+        self._request_reply(text)
+
+    @work
+    async def _request_reply(self, text: str) -> None:
+        result = await asyncio.to_thread(call_llm, [{"role": "user", "content": text}])
+        self.query_one("#messages", RichLog).write(result["content"])
+        self._write_log(result["content"])
 
     def _write_log(self, message: str) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)

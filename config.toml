@@ -1,0 +1,7 @@
+[model]
+provider = "lmstudio"
+base_url = "http://localhost:1234/v1"
+# name = "qwen/qwen3-4b-2507"
+name = "liquid/lfm2.5-1.2b"
+api_key = "not-needed"
+timeout = 20
