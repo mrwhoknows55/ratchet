@@ -112,6 +112,58 @@ def test_call_llm_override_config_takes_precedence(monkeypatch):
     assert result["model"] == "override-model"
 
 
+def test_call_llm_includes_tools_in_request_when_provided(monkeypatch):
+    import json
+
+    seen = {}
+    tools = [{"type": "function", "function": {"name": "list_files"}}]
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(handler))
+
+    agent_client.call_llm([{"role": "user", "content": "hi"}], tools=tools)
+
+    assert seen["body"]["tools"] == tools
+
+
+def test_call_llm_omits_tools_key_when_not_provided(monkeypatch):
+    import json
+
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(handler))
+
+    agent_client.call_llm([{"role": "user", "content": "hi"}])
+
+    assert "tools" not in seen["body"]
+
+
+def test_call_llm_returns_tool_calls_when_present(monkeypatch):
+    tool_calls = [
+        {"id": "call_1", "type": "function", "function": {"name": "list_files", "arguments": "{}"}}
+    ]
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": None, "tool_calls": tool_calls}}]},
+        )
+
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(handler))
+
+    result = agent_client.call_llm([{"role": "user", "content": "hi"}])
+
+    assert result["tool_calls"] == tool_calls
+    assert result["content"] == ""
+
+
 def test_call_llm_env_vars_take_precedence_over_config(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "env-model")
     monkeypatch.setenv("OPENAI_BASE_URL", "http://env-host:9999/v1")

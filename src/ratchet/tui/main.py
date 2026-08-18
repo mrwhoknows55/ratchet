@@ -12,6 +12,7 @@ from textual.widgets.option_list import Option
 from ratchet.agent.client import call_llm
 from ratchet.agent.config import load_config
 from ratchet.agent.models import load_supported_models
+from ratchet.agent.tools import run_agent_turn
 from ratchet.shell.executor import run_command
 
 DEFAULT_LOG_PATH = Path("log/ratchet.log")
@@ -95,10 +96,10 @@ class RatchetApp(App):
             message = f"shell: {output} [exit {result['exit_code']}]"
         else:
             override_config = {"model": self.selected_model} if self.selected_model else None
-            result = await asyncio.to_thread(
-                call_llm, [{"role": "user", "content": text}], override_config
+            reply = await asyncio.to_thread(
+                run_agent_turn, call_llm, text, self.sandbox_root, override_config
             )
-            message = f"assistant: {result['content']}"
+            message = f"assistant: {reply}"
         self.query_one("#messages", RichLog).write(message)
         self._write_log(message)
 

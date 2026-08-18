@@ -30,7 +30,7 @@ def make_app(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _stub_call_llm(monkeypatch):
-    def fake_call_llm(messages, override_config=None):
+    def fake_call_llm(messages, override_config=None, tools=None):
         return {"content": "mock-reply", "model": "test-model", "status": "success"}
 
     monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
@@ -252,7 +252,7 @@ async def test_agent_reply_written_to_log_file(tmp_path):
 
 
 async def test_offline_reply_content_is_still_displayed(tmp_path, monkeypatch):
-    def fake_call_llm(messages, override_config=None):
+    def fake_call_llm(messages, override_config=None, tools=None):
         return {
             "content": "[LM Studio Offline] Could not connect to local server.",
             "model": "test-model",
@@ -274,7 +274,7 @@ async def test_offline_reply_content_is_still_displayed(tmp_path, monkeypatch):
 
 
 async def test_error_reply_content_is_still_displayed(tmp_path, monkeypatch):
-    def fake_call_llm(messages, override_config=None):
+    def fake_call_llm(messages, override_config=None, tools=None):
         return {
             "content": "[API Error] boom",
             "model": "test-model",
@@ -366,7 +366,7 @@ async def test_ctrl_p_pick_model_sets_selected_model_and_confirms(tmp_path):
 async def test_chat_message_after_pick_uses_selected_model_override(tmp_path, monkeypatch):
     calls = []
 
-    def fake_call_llm(messages, override_config=None):
+    def fake_call_llm(messages, override_config=None, tools=None):
         calls.append(override_config)
         return {"content": "mock-reply", "model": "test-model", "status": "success"}
 

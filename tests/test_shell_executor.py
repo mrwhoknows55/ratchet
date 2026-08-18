@@ -1,4 +1,4 @@
-from ratchet.shell.executor import run_command
+from ratchet.shell.executor import list_files, run_command
 
 
 def test_run_command_success(tmp_path):
@@ -45,3 +45,27 @@ def test_run_command_creates_missing_sandbox_root(tmp_path):
     result = run_command("pwd", root)
     assert result["exit_code"] == 0
     assert root.is_dir()
+
+
+def test_list_files_returns_sorted_names(tmp_path):
+    (tmp_path / "b.txt").write_text("")
+    (tmp_path / "a.txt").write_text("")
+    result = list_files(tmp_path)
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "a.txt\nb.txt"
+    assert result["stderr"] == ""
+
+
+def test_list_files_creates_missing_sandbox_root(tmp_path):
+    root = tmp_path / "sandbox"
+    assert not root.exists()
+    result = list_files(root)
+    assert result["exit_code"] == 0
+    assert root.is_dir()
+
+
+def test_list_files_empty_directory(tmp_path):
+    result = list_files(tmp_path)
+    assert result["exit_code"] == 0
+    assert result["stdout"] == ""
+    assert result["stderr"] == ""

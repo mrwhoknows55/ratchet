@@ -35,3 +35,9 @@ def run_command(command: str, root: Path) -> dict[str, str | int]:
         return {"stdout": "", "stderr": f"Command not found: '{args[0]}'", "exit_code": 127}
     except Exception as e:
         return {"stdout": "", "stderr": f"Execution error: {e}", "exit_code": 1}
+
+
+def list_files(root: Path) -> dict[str, str | int]:
+    root.mkdir(parents=True, exist_ok=True)
+    names = sorted(entry.name for entry in root.iterdir())
+    return {"stdout": "\n".join(names), "stderr": "", "exit_code": 0}
