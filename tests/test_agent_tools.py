@@ -112,6 +112,64 @@ def test_run_agent_turn_executes_tool_call_and_returns_final_reply(tmp_path):
     assert tool_message["content"] == "a.txt"
 
 
+def test_run_agent_turn_calls_on_tool_call_before_and_after_execution(tmp_path):
+    (tmp_path / "a.txt").write_text("")
+    llm_calls = []
+    notifications = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        llm_calls.append(messages)
+        if len(llm_calls) == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_files", "arguments": "{}"},
+                    }
+                ],
+            }
+        return {"content": "there is a.txt", "model": "test-model", "status": "success"}
+
+    agent_tools.run_agent_turn(
+        fake_call_llm, "what files exist?", tmp_path, on_tool_call=notifications.append
+    )
+
+    assert notifications == [
+        "tool: list_files running...",
+        "tool: list_files -> a.txt",
+    ]
+
+
+def test_run_agent_turn_without_on_tool_call_does_not_error(tmp_path):
+    (tmp_path / "a.txt").write_text("")
+    calls = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls.append(messages)
+        if len(calls) == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_files", "arguments": "{}"},
+                    }
+                ],
+            }
+        return {"content": "there is a.txt", "model": "test-model", "status": "success"}
+
+    reply = agent_tools.run_agent_turn(fake_call_llm, "what files exist?", tmp_path)
+
+    assert reply == "there is a.txt"
+
+
 def test_run_agent_turn_stops_after_max_iterations(tmp_path):
     def fake_call_llm(messages, override_config=None, tools=None):
         return {

@@ -295,6 +295,84 @@ async def test_error_reply_content_is_still_displayed(tmp_path, monkeypatch):
         assert any("[API Error] boom" in line for line in lines)
 
 
+async def test_tool_call_shows_running_and_result_in_display(tmp_path, monkeypatch):
+    (tmp_path / "a.txt").write_text("")
+    calls = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls.append(messages)
+        if len(calls) == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_files", "arguments": "{}"},
+                    }
+                ],
+            }
+        return {"content": "there is a.txt", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "what files exist?"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        richlog = app.query_one("#messages", RichLog)
+        lines = [strip.text for strip in richlog.lines]
+        assert any("tool: list_files running..." in line for line in lines)
+        assert any("tool: list_files -> a.txt" in line for line in lines)
+
+
+async def test_tool_call_logged_to_log_file(tmp_path, monkeypatch):
+    (tmp_path / "a.txt").write_text("")
+    calls = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls.append(messages)
+        if len(calls) == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_files", "arguments": "{}"},
+                    }
+                ],
+            }
+        return {"content": "there is a.txt", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    log_path = tmp_path / "ratchet.log"
+    app = RatchetApp(log_path=log_path, sandbox_root=tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", Input)
+        input_widget.focus()
+        input_widget.value = "what files exist?"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+    content = log_path.read_text()
+    assert re.search(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} tool: list_files running\.\.\.$",
+        content,
+        re.MULTILINE,
+    )
+    assert re.search(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} tool: list_files -> a\.txt$",
+        content,
+        re.MULTILINE,
+    )
+
+
 async def test_shell_mode_defaults_sandbox_root_to_cwd_sandbox_subdir(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     app = RatchetApp(log_path=tmp_path / "ratchet.log", mode="shell")

@@ -86,6 +86,7 @@ def run_agent_turn(
     user_text: str,
     sandbox_root: Path,
     override_config: dict | None = None,
+    on_tool_call: Callable[[str], None] | None = None,
 ) -> str:
     messages: list[dict] = [{"role": "user", "content": user_text}]
 
@@ -102,8 +103,13 @@ def run_agent_turn(
             {"role": "assistant", "content": result.get("content") or "", "tool_calls": tool_calls}
         )
         for call in tool_calls:
+            tool_name = call["function"]["name"]
             arguments = json.loads(call["function"]["arguments"] or "{}")
-            output = execute_tool(call["function"]["name"], arguments, sandbox_root)
+            if on_tool_call:
+                on_tool_call(f"tool: {tool_name} running...")
+            output = execute_tool(tool_name, arguments, sandbox_root)
+            if on_tool_call:
+                on_tool_call(f"tool: {tool_name} -> {output}")
             messages.append(
                 {"role": "tool", "tool_call_id": call["id"], "content": output}
             )

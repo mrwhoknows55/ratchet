@@ -97,9 +97,18 @@ class RatchetApp(App):
         else:
             override_config = {"model": self.selected_model} if self.selected_model else None
             reply = await asyncio.to_thread(
-                run_agent_turn, call_llm, text, self.sandbox_root, override_config
+                run_agent_turn,
+                call_llm,
+                text,
+                self.sandbox_root,
+                override_config,
+                lambda msg: self.call_from_thread(self._on_tool_call, msg),
             )
             message = f"assistant: {reply}"
+        self.query_one("#messages", RichLog).write(message)
+        self._write_log(message)
+
+    def _on_tool_call(self, message: str) -> None:
         self.query_one("#messages", RichLog).write(message)
         self._write_log(message)
 
