@@ -6,6 +6,14 @@ def test_tool_schemas_include_list_files():
     assert "list_files" in names
 
 
+def test_tool_schemas_include_new_tools():
+    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
+    assert "search_files" in names
+    assert "read_files" in names
+    assert "write_files" in names
+    assert "delete_file" in names
+
+
 def test_execute_tool_list_files(tmp_path):
     (tmp_path / "a.txt").write_text("")
     result = agent_tools.execute_tool("list_files", {}, tmp_path)
@@ -15,6 +23,38 @@ def test_execute_tool_list_files(tmp_path):
 def test_execute_tool_list_files_empty_directory(tmp_path):
     result = agent_tools.execute_tool("list_files", {}, tmp_path)
     assert result == "(no output)"
+
+
+def test_execute_tool_read_files(tmp_path):
+    (tmp_path / "a.txt").write_text("hello world")
+    result = agent_tools.execute_tool("read_files", {"path": "a.txt"}, tmp_path)
+    assert result == "hello world"
+
+
+def test_execute_tool_read_files_missing(tmp_path):
+    result = agent_tools.execute_tool("read_files", {"path": "missing.txt"}, tmp_path)
+    assert "not found" in result.lower()
+
+
+def test_execute_tool_write_files(tmp_path):
+    result = agent_tools.execute_tool(
+        "write_files", {"path": "a.txt", "content": "hello"}, tmp_path
+    )
+    assert "wrote" in result.lower()
+    assert (tmp_path / "a.txt").read_text() == "hello"
+
+
+def test_execute_tool_delete_file(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = agent_tools.execute_tool("delete_file", {"path": "a.txt"}, tmp_path)
+    assert "deleted" in result.lower()
+    assert not (tmp_path / "a.txt").exists()
+
+
+def test_execute_tool_search_files(tmp_path):
+    (tmp_path / "a.txt").write_text("hello world\n")
+    result = agent_tools.execute_tool("search_files", {"pattern": "hello"}, tmp_path)
+    assert "a.txt" in result
 
 
 def test_execute_tool_unknown_name(tmp_path):

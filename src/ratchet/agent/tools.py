@@ -2,9 +2,11 @@ import json
 from pathlib import Path
 from typing import Callable
 
-from ratchet.shell.executor import list_files
+from ratchet.shell.executor import delete_file, list_files, read_files, search_files, write_files
 
 MAX_TOOL_ITERATIONS = 5
+
+_PATH_PROPERTY = {"path": {"type": "string", "description": "Path relative to the sandbox root."}}
 
 TOOL_SCHEMAS = [
     {
@@ -14,15 +16,69 @@ TOOL_SCHEMAS = [
             "description": "List files in the sandboxed working directory.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": "Search file contents in the sandbox for a pattern (uses rg/grep).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Pattern to search for."}
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_files",
+            "description": "Read the contents of a file in the sandboxed working directory.",
+            "parameters": {"type": "object", "properties": _PATH_PROPERTY, "required": ["path"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_files",
+            "description": "Write content to a file in the sandbox, creating it if needed.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    **_PATH_PROPERTY,
+                    "content": {"type": "string", "description": "Content to write."},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_file",
+            "description": "Delete a file in the sandboxed working directory.",
+            "parameters": {"type": "object", "properties": _PATH_PROPERTY, "required": ["path"]},
+        },
+    },
 ]
 
 
 def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
     if name == "list_files":
         result = list_files(sandbox_root)
-        return (str(result["stdout"]) + str(result["stderr"])).strip() or "(no output)"
-    return f"Error: unknown tool '{name}'"
+    elif name == "search_files":
+        result = search_files(sandbox_root, arguments["pattern"])
+    elif name == "read_files":
+        result = read_files(sandbox_root, arguments["path"])
+    elif name == "write_files":
+        result = write_files(sandbox_root, arguments["path"], arguments["content"])
+    elif name == "delete_file":
+        result = delete_file(sandbox_root, arguments["path"])
+    else:
+        return f"Error: unknown tool '{name}'"
+    return (str(result["stdout"]) + str(result["stderr"])).strip() or "(no output)"
 
 
 def run_agent_turn(

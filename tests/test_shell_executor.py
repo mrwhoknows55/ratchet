@@ -1,4 +1,11 @@
-from ratchet.shell.executor import list_files, run_command
+from ratchet.shell.executor import (
+    delete_file,
+    list_files,
+    read_files,
+    run_command,
+    search_files,
+    write_files,
+)
 
 
 def test_run_command_success(tmp_path):
@@ -69,3 +76,101 @@ def test_list_files_empty_directory(tmp_path):
     assert result["exit_code"] == 0
     assert result["stdout"] == ""
     assert result["stderr"] == ""
+
+
+def test_read_files_returns_contents(tmp_path):
+    (tmp_path / "a.txt").write_text("hello world")
+    result = read_files(tmp_path, "a.txt")
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "hello world"
+    assert result["stderr"] == ""
+
+
+def test_read_files_missing_file(tmp_path):
+    result = read_files(tmp_path, "missing.txt")
+    assert result["exit_code"] == 1
+    assert "not found" in result["stderr"].lower()
+
+
+def test_read_files_denies_absolute_path(tmp_path):
+    result = read_files(tmp_path, "/etc/passwd")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_read_files_denies_parent_traversal(tmp_path):
+    result = read_files(tmp_path, "../secret.txt")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_write_files_creates_file(tmp_path):
+    result = write_files(tmp_path, "a.txt", "hello world")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "a.txt").read_text() == "hello world"
+
+
+def test_write_files_overwrites_existing_file(tmp_path):
+    (tmp_path / "a.txt").write_text("old")
+    result = write_files(tmp_path, "a.txt", "new")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "a.txt").read_text() == "new"
+
+
+def test_write_files_creates_parent_directories(tmp_path):
+    result = write_files(tmp_path, "sub/dir/a.txt", "hello")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "sub" / "dir" / "a.txt").read_text() == "hello"
+
+
+def test_write_files_denies_absolute_path(tmp_path):
+    result = write_files(tmp_path, "/etc/passwd", "hello")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_write_files_denies_parent_traversal(tmp_path):
+    result = write_files(tmp_path, "../secret.txt", "hello")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_delete_file_removes_file(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = delete_file(tmp_path, "a.txt")
+    assert result["exit_code"] == 0
+    assert not (tmp_path / "a.txt").exists()
+
+
+def test_delete_file_missing_file(tmp_path):
+    result = delete_file(tmp_path, "missing.txt")
+    assert result["exit_code"] == 1
+    assert "not found" in result["stderr"].lower()
+
+
+def test_delete_file_denies_absolute_path(tmp_path):
+    result = delete_file(tmp_path, "/etc/passwd")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_delete_file_denies_parent_traversal(tmp_path):
+    result = delete_file(tmp_path, "../secret.txt")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_search_files_finds_match(tmp_path):
+    (tmp_path / "a.txt").write_text("hello world\n")
+    (tmp_path / "b.txt").write_text("nothing here\n")
+    result = search_files(tmp_path, "hello")
+    assert result["exit_code"] == 0
+    assert "a.txt" in result["stdout"]
+    assert "b.txt" not in result["stdout"]
+
+
+def test_search_files_no_matches(tmp_path):
+    (tmp_path / "a.txt").write_text("hello world\n")
+    result = search_files(tmp_path, "notpresentanywhere")
+    assert result["exit_code"] != 0
+    assert result["stdout"] == ""
