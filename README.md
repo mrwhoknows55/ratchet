@@ -17,6 +17,26 @@ local model against online models, and
 [`docs/shell-commands.md`](docs/shell-commands.md) for the shell mode
 commands checklist.
 
+## Benchmark tasks
+
+Tasks to be benchmarked on (taken from terminal-bench):
+
+- [wip/todo] Create a file called `hello.txt` in the current directory. Write "Hello, world!" to it. Make sure it ends in a newline. Don't make any other files or folders.
+- [wip/todo] Extract the contents of the solution from `archive.tar` and write it to `app/solution.txt`.
+- [wip/todo] Instructions:
+  - Create a new spreadsheet named "Financial Report"
+  - Create a sheet in this spreadsheet named "Q1 Data"
+  - Add the following data to the sheet, starting at cell A1:
+    ```
+    Month     Revenue     Expenses
+    January     10000     8000
+    February     12000     9000
+    March     15000     10000
+    ```
+  - Add a third column that contains the profit.
+- [wip/todo] Download this video of someone playing zork: https://www.youtube.com/watch?v=ZCbvyPbhRfA. Then transcribe the entire contents of the text, and create a file `app/solution.txt` that has all the moves they input, one per line, in the format `n` or `get bag` etc.
+- [wip/todo] Download the first video ever uploaded to YouTube as an mp4. Then, trim the video to the final 10 seconds and save it as `result.mp4`.
+
 ## Setup
 
 ```
