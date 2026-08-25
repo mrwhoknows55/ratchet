@@ -13,6 +13,10 @@ DEFAULT_MODEL_CONFIG = {
     "timeout": 10,
 }
 
+DEFAULT_AGENT_CONFIG = {
+    "max_steps": 12,
+}
+
 
 @pytest.fixture(autouse=True)
 def _isolate_config_path(monkeypatch, tmp_path):
@@ -21,7 +25,10 @@ def _isolate_config_path(monkeypatch, tmp_path):
 
 
 def test_load_config_returns_defaults_when_file_missing():
-    assert agent_config.load_config() == {"model": DEFAULT_MODEL_CONFIG}
+    assert agent_config.load_config() == {
+        "model": DEFAULT_MODEL_CONFIG,
+        "agent": DEFAULT_AGENT_CONFIG,
+    }
 
 
 def test_load_config_reads_existing_toml_file():
@@ -45,13 +52,19 @@ def test_load_config_reads_existing_toml_file():
 def test_load_config_returns_defaults_on_malformed_toml():
     agent_config.CONFIG_FILE.write_text("this is not [valid toml")
 
-    assert agent_config.load_config() == {"model": DEFAULT_MODEL_CONFIG}
+    assert agent_config.load_config() == {
+        "model": DEFAULT_MODEL_CONFIG,
+        "agent": DEFAULT_AGENT_CONFIG,
+    }
 
 
 def test_load_config_returns_defaults_on_empty_file():
     agent_config.CONFIG_FILE.write_text("")
 
-    assert agent_config.load_config() == {"model": DEFAULT_MODEL_CONFIG}
+    assert agent_config.load_config() == {
+        "model": DEFAULT_MODEL_CONFIG,
+        "agent": DEFAULT_AGENT_CONFIG,
+    }
 
 
 def test_load_config_path_is_project_root_config_toml():
@@ -86,4 +99,7 @@ def test_load_config_handles_missing_env_file(monkeypatch, tmp_path):
     monkeypatch.setattr(agent_config, "ENV_FILE", tmp_path / ".env")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    assert agent_config.load_config() == {"model": DEFAULT_MODEL_CONFIG}
+    assert agent_config.load_config() == {
+        "model": DEFAULT_MODEL_CONFIG,
+        "agent": DEFAULT_AGENT_CONFIG,
+    }

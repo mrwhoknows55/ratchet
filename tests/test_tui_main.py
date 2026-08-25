@@ -1,11 +1,12 @@
 import re
 
 import pytest
-from textual.widgets import Footer, Header, Input, RichLog
+from textual.events import Paste
+from textual.widgets import Footer, Header, RichLog
 
 from ratchet.agent import config as agent_config
 from ratchet.tui import main as tui_main
-from ratchet.tui.main import RatchetApp
+from ratchet.tui.main import PromptInput, RatchetApp
 
 TEST_CONFIG_TOML = """
 [model]
@@ -68,25 +69,25 @@ async def test_unbound_key_does_not_exit_app(tmp_path):
 async def test_input_is_focused_on_launch(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test():
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         assert app.focused is input_widget
 
 
 async def test_typing_letter_q_does_not_quit(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         await pilot.press("q", "u", "i", "t")
         assert app.is_running
-        assert input_widget.value == "quit"
+        assert input_widget.text == "quit"
 
 
 async def test_submitted_message_echoes_to_display(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "hello there"
+        input_widget.text = "hello there"
         await pilot.press("enter")
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
@@ -96,20 +97,20 @@ async def test_submitted_message_echoes_to_display(tmp_path):
 async def test_submitted_message_clears_input(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "hello there"
+        input_widget.text = "hello there"
         await pilot.press("enter")
-        assert input_widget.value == ""
+        assert input_widget.text == ""
 
 
 async def test_submitted_message_written_to_log_file(tmp_path):
     log_path = tmp_path / "ratchet.log"
     app = RatchetApp(log_path=log_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "hello there"
+        input_widget.text = "hello there"
         await pilot.press("enter")
     content = log_path.read_text()
     assert re.search(
@@ -121,10 +122,10 @@ async def test_multiple_messages_appended_in_order(tmp_path):
     log_path = tmp_path / "ratchet.log"
     app = RatchetApp(log_path=log_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
         for text in ["first", "second"]:
-            input_widget.value = text
+            input_widget.text = text
             await pilot.press("enter")
         await app.workers.wait_for_complete()
     lines = log_path.read_text().splitlines()
@@ -139,8 +140,8 @@ async def test_empty_message_not_echoed_or_logged(tmp_path):
     async with app.run_test() as pilot:
         richlog = app.query_one("#messages", RichLog)
         lines_before = len(richlog.lines)
-        input_widget = app.query_one("#message_input", Input)
-        input_widget.value = ""
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.text = ""
         await pilot.press("enter")
         assert len(richlog.lines) == lines_before
     content = log_path.read_text()
@@ -185,9 +186,9 @@ async def test_app_stopped_logged_on_unmount(tmp_path):
 async def test_ctrl_l_clears_message_log(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "hello there"
+        input_widget.text = "hello there"
         await pilot.press("enter")
         richlog = app.query_one("#messages", RichLog)
         assert len(richlog.lines) > 0
@@ -207,11 +208,11 @@ async def test_ctrl_l_on_empty_log_does_not_error(tmp_path):
 async def test_ctrl_l_does_not_clear_input_value(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "not yet submitted"
+        input_widget.text = "not yet submitted"
         await pilot.press("ctrl+l")
-        assert input_widget.value == "not yet submitted"
+        assert input_widget.text == "not yet submitted"
 
 
 async def test_ctrl_l_logged_to_file(tmp_path):
@@ -226,9 +227,9 @@ async def test_ctrl_l_logged_to_file(tmp_path):
 async def test_agent_reply_written_to_display(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "hello there"
+        input_widget.text = "hello there"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
@@ -240,9 +241,9 @@ async def test_agent_reply_written_to_log_file(tmp_path):
     log_path = tmp_path / "ratchet.log"
     app = RatchetApp(log_path=log_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "hello there"
+        input_widget.text = "hello there"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
     content = log_path.read_text()
@@ -263,9 +264,9 @@ async def test_offline_reply_content_is_still_displayed(tmp_path, monkeypatch):
     monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "hello there"
+        input_widget.text = "hello there"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
@@ -285,9 +286,9 @@ async def test_error_reply_content_is_still_displayed(tmp_path, monkeypatch):
     monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "hello there"
+        input_widget.text = "hello there"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
@@ -319,9 +320,9 @@ async def test_tool_call_shows_running_and_result_in_display(tmp_path, monkeypat
     monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
     app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "what files exist?"
+        input_widget.text = "what files exist?"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
@@ -355,9 +356,9 @@ async def test_tool_call_logged_to_log_file(tmp_path, monkeypatch):
     log_path = tmp_path / "ratchet.log"
     app = RatchetApp(log_path=log_path, sandbox_root=tmp_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "what files exist?"
+        input_widget.text = "what files exist?"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
     content = log_path.read_text()
@@ -385,9 +386,9 @@ async def test_shell_mode_executes_command_and_displays_output(tmp_path):
         log_path=tmp_path / "ratchet.log", mode="shell", sandbox_root=tmp_path
     )
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "cat sample.txt"
+        input_widget.text = "cat sample.txt"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
@@ -400,9 +401,9 @@ async def test_shell_mode_denies_path_outside_sandbox(tmp_path):
         log_path=tmp_path / "ratchet.log", mode="shell", sandbox_root=tmp_path
     )
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "cat /etc/passwd"
+        input_widget.text = "cat /etc/passwd"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
@@ -453,9 +454,9 @@ async def test_chat_message_after_pick_uses_selected_model_override(tmp_path, mo
     async with app.run_test() as pilot:
         await pilot.press("ctrl+p")
         await pilot.press("enter")
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "hello there"
+        input_widget.text = "hello there"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
         assert calls[-1] == {"model": {"name": "anthropic/claude-sonnet-5"}}
@@ -465,12 +466,54 @@ async def test_user_message_logged_before_reply_worker_completes(tmp_path):
     log_path = tmp_path / "ratchet.log"
     app = RatchetApp(log_path=log_path)
     async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", Input)
+        input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
-        input_widget.value = "hello there"
+        input_widget.text = "hello there"
         await pilot.press("enter")
         content = log_path.read_text()
         assert re.search(
             r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} user: hello there$", content, re.MULTILINE
         )
         await app.workers.wait_for_complete()
+
+
+async def test_multiline_paste_keeps_every_line(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        app.post_message(Paste("def foo():\n    return 1\n"))
+        await pilot.pause()
+        assert input_widget.text == "def foo():\n    return 1\n"
+
+
+async def test_multiline_message_sent_to_agent_verbatim(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        seen.append(messages)
+        return {"content": "mock-reply", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        app.post_message(Paste("first line\nsecond line"))
+        await pilot.pause()
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        assert seen[0][0]["content"] == "first line\nsecond line"
+        assert input_widget.text == ""
+
+
+async def test_newline_keys_insert_newline_instead_of_submitting(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        await pilot.press("a", "shift+enter", "b", "ctrl+j", "c")
+        assert input_widget.text == "a\nb\nc"
+        richlog = app.query_one("#messages", RichLog)
+        lines = [strip.text for strip in richlog.lines]
+        assert not any("user:" in line for line in lines)

@@ -2,9 +2,16 @@ import json
 from pathlib import Path
 from typing import Callable
 
-from ratchet.shell.executor import delete_file, list_files, read_files, search_files, write_files
+from ratchet.agent.config import load_config
+from ratchet.shell.executor import (
+    delete_file,
+    list_files,
+    read_files,
+    search_files,
+    write_files,
+)
 
-MAX_TOOL_ITERATIONS = 5
+DEFAULT_MAX_STEPS = 12
 
 _PATH_PROPERTY = {"path": {"type": "string", "description": "Path relative to the sandbox root."}}
 
@@ -89,8 +96,9 @@ def run_agent_turn(
     on_tool_call: Callable[[str], None] | None = None,
 ) -> str:
     messages: list[dict] = [{"role": "user", "content": user_text}]
+    max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
 
-    for _ in range(MAX_TOOL_ITERATIONS):
+    for _ in range(max_steps):
         result = call_llm_fn(messages, override_config, tools=TOOL_SCHEMAS)
         if result["status"] != "success":
             return result["content"]

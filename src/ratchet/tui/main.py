@@ -2,11 +2,12 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Input, OptionList, RichLog
+from textual.widgets import Footer, Header, OptionList, RichLog, TextArea
 from textual.widgets.option_list import Option
 
 from ratchet.agent.client import call_llm
@@ -16,6 +17,29 @@ from ratchet.agent.tools import run_agent_turn
 from ratchet.shell.executor import run_command
 
 DEFAULT_LOG_PATH = Path("log/ratchet.log")
+
+
+class PromptInput(TextArea):
+    NEWLINE_KEYS = ("shift+enter", "ctrl+j")
+
+    class Submitted(Message):
+        def __init__(self, prompt_input: "PromptInput", text: str) -> None:
+            super().__init__()
+            self.prompt_input = prompt_input
+            self.text = text
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Submitted(self, self.text))
+            return
+        if event.key in self.NEWLINE_KEYS:
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            return
+        await super()._on_key(event)
 
 
 class ModelPickerScreen(ModalScreen[str]):
@@ -41,6 +65,17 @@ class ModelPickerScreen(ModalScreen[str]):
 class RatchetApp(App):
     ENABLE_COMMAND_PALETTE = False
 
+    CSS = """
+    #messages {
+        height: 1fr;
+    }
+
+    #message_input {
+        height: auto;
+        max-height: 12;
+    }
+    """
+
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+l", "clear_log", "Clear Log"),
@@ -62,7 +97,7 @@ class RatchetApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield RichLog(id="messages")
-        yield Input(id="message_input")
+        yield PromptInput(id="message_input")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -73,19 +108,19 @@ class RatchetApp(App):
             message = f"model: {model_name}"
             self.query_one("#messages", RichLog).write(message)
             self._write_log(message)
-        self.query_one("#message_input", Input).focus()
+        self.query_one("#message_input", PromptInput).focus()
 
     def on_unmount(self) -> None:
         self._write_log("app stopped")
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        text = event.value
+    def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
+        text = event.text
         if not text.strip():
             return
         message = f"user: {text}"
         self.query_one("#messages", RichLog).write(message)
         self._write_log(message)
-        event.input.value = ""
+        event.prompt_input.text = ""
         self._request_reply(text)
 
     @work

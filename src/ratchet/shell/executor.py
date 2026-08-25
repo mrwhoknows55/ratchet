@@ -66,7 +66,15 @@ def read_files(root: Path, path: str) -> dict[str, str | int]:
         return _access_denied(path)
     if not target.is_file():
         return {"stdout": "", "stderr": f"File not found: '{path}'", "exit_code": 1}
-    return {"stdout": target.read_text(), "stderr": "", "exit_code": 0}
+    try:
+        content = target.read_text()
+    except UnicodeDecodeError:
+        return {
+            "stdout": "",
+            "stderr": f"Cannot read '{path}': not UTF-8 text (binary file).",
+            "exit_code": 1,
+        }
+    return {"stdout": content, "stderr": "", "exit_code": 0}
 
 
 def write_files(root: Path, path: str, content: str) -> dict[str, str | int]:

@@ -13,7 +13,10 @@ DEFAULT_CONFIG = {
         "name": "qwen/qwen3-4b-2507",
         "api_key": "not-needed",
         "timeout": 10,
-    }
+    },
+    "agent": {
+        "max_steps": 12,
+    },
 }
 
 

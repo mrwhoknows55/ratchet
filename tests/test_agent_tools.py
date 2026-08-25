@@ -1,3 +1,4 @@
+from ratchet.agent import config as agent_config
 from ratchet.agent import tools as agent_tools
 
 
@@ -202,3 +203,54 @@ def test_run_agent_turn_passes_override_config_through(tmp_path):
     )
 
     assert seen == [{"model": {"name": "x"}}]
+
+
+def _tool_call_forever(calls):
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls.append(messages)
+        return {
+            "content": "",
+            "model": "test-model",
+            "status": "success",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "list_files", "arguments": "{}"},
+                }
+            ],
+        }
+
+    return fake_call_llm
+
+
+def _use_config(monkeypatch, tmp_path, body):
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(body)
+    monkeypatch.setattr(agent_config, "CONFIG_FILE", config_file)
+
+
+def test_run_agent_turn_reads_max_steps_from_config(monkeypatch, tmp_path):
+    _use_config(monkeypatch, tmp_path, '[model]\nname = "test-model"\n\n[agent]\nmax_steps = 3\n')
+    calls = []
+
+    reply = agent_tools.run_agent_turn(_tool_call_forever(calls), "hi", tmp_path)
+
+    assert len(calls) == 3
+    assert "exceeded" in reply.lower()
+
+
+def test_run_agent_turn_falls_back_to_default_max_steps_without_agent_section(
+    monkeypatch, tmp_path
+):
+    _use_config(monkeypatch, tmp_path, '[model]\nname = "test-model"\n')
+    calls = []
+
+    agent_tools.run_agent_turn(_tool_call_forever(calls), "hi", tmp_path)
+
+    assert len(calls) == agent_tools.DEFAULT_MAX_STEPS
+
+
+def test_default_max_steps_is_twelve():
+    assert agent_tools.DEFAULT_MAX_STEPS == 12
+    assert agent_config.DEFAULT_CONFIG["agent"]["max_steps"] == 12

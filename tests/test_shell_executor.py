@@ -174,3 +174,11 @@ def test_search_files_no_matches(tmp_path):
     result = search_files(tmp_path, "notpresentanywhere")
     assert result["exit_code"] != 0
     assert result["stdout"] == ""
+
+
+def test_read_files_binary_file_returns_error_instead_of_raising(tmp_path):
+    (tmp_path / "archive.tar").write_bytes(b"._app\x00\x00\xa3\xff binary")
+    result = read_files(tmp_path, "archive.tar")
+    assert result["exit_code"] == 1
+    assert result["stdout"] == ""
+    assert "archive.tar" in result["stderr"]
