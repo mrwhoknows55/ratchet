@@ -6,6 +6,7 @@ from ratchet.agent.config import load_config
 from ratchet.shell.executor import (
     delete_file,
     list_files,
+    read_file_range,
     read_files,
     replace_in_file,
     search_files,
@@ -13,6 +14,17 @@ from ratchet.shell.executor import (
 )
 
 DEFAULT_MAX_STEPS = 12
+
+SYSTEM_PROMPT = (
+    "You are a coding agent working inside a sandboxed directory. "
+    "Look before you change: read or list what you need first. "
+    "Prefer the narrowest tool that does the job, and edit files in place "
+    "rather than rewriting them whole. "
+    "File contents come back line-numbered as 'N| '; that prefix is display "
+    "only and is not part of the file. "
+    "If a call fails, read the error and adjust your next one instead of "
+    "repeating it. Stop and answer once the task is done."
+)
 
 _PATH_PROPERTY = {"path": {"type": "string", "description": "Path relative to the sandbox root."}}
 
@@ -43,15 +55,41 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "read_files",
-            "description": "Read the contents of a file in the sandboxed working directory.",
+            "description": (
+                "Read a whole file. Long files are truncated; read_file_range reads the rest."
+            ),
             "parameters": {"type": "object", "properties": _PATH_PROPERTY, "required": ["path"]},
         },
     },
     {
         "type": "function",
         "function": {
+            "name": "read_file_range",
+            "description": "Read lines start_line to end_line of a file, 1-indexed and inclusive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    **_PATH_PROPERTY,
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to read, 1-indexed. Defaults to 1.",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to read, inclusive.",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "write_files",
-            "description": "Write content to a file in the sandbox, creating it if needed.",
+            "description": (
+                "Write content to a file, creating it if needed. Replaces the whole file."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -66,11 +104,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "replace_in_file",
-            "description": (
-                "Replace an exact string in a file in the sandbox. 'old_str' must occur "
-                "exactly once; include surrounding lines to make it unique. Fails without "
-                "changing the file if 'old_str' is missing or matches more than once."
-            ),
+            "description": "Replace an exact string that appears exactly once in a file.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -103,6 +137,13 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
         result = search_files(sandbox_root, arguments["pattern"])
     elif name == "read_files":
         result = read_files(sandbox_root, arguments["path"])
+    elif name == "read_file_range":
+        result = read_file_range(
+            sandbox_root,
+            arguments["path"],
+            arguments.get("start_line", 1),
+            arguments.get("end_line"),
+        )
     elif name == "write_files":
         result = write_files(sandbox_root, arguments["path"], arguments["content"])
     elif name == "replace_in_file":
@@ -123,7 +164,10 @@ def run_agent_turn(
     override_config: dict | None = None,
     on_tool_call: Callable[[str], None] | None = None,
 ) -> str:
-    messages: list[dict] = [{"role": "user", "content": user_text}]
+    messages: list[dict] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_text},
+    ]
     max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
 
     for _ in range(max_steps):

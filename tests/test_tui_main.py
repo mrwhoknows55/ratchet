@@ -503,7 +503,7 @@ async def test_multiline_message_sent_to_agent_verbatim(tmp_path, monkeypatch):
         await pilot.pause()
         await pilot.press("enter")
         await app.workers.wait_for_complete()
-        assert seen[0][0]["content"] == "first line\nsecond line"
+        assert seen[0][-1]["content"] == "first line\nsecond line"
         assert input_widget.text == ""
 
 

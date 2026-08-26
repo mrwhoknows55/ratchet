@@ -1,6 +1,8 @@
 from ratchet.shell.executor import (
+    DEFAULT_MAX_READ_LINES,
     delete_file,
     list_files,
+    read_file_range,
     read_files,
     replace_in_file,
     run_command,
@@ -83,7 +85,7 @@ def test_read_files_returns_contents(tmp_path):
     (tmp_path / "a.txt").write_text("hello world")
     result = read_files(tmp_path, "a.txt")
     assert result["exit_code"] == 0
-    assert result["stdout"] == "hello world"
+    assert result["stdout"] == "1| hello world"
     assert result["stderr"] == ""
 
 
@@ -237,5 +239,89 @@ def test_replace_in_file_binary_file_returns_error(tmp_path):
 
 def test_replace_in_file_denies_parent_traversal(tmp_path):
     result = replace_in_file(tmp_path, "../secret.txt", "a", "b")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def _numbered_file(tmp_path, name, count):
+    (tmp_path / name).write_text("\n".join(f"line {i}" for i in range(1, count + 1)) + "\n")
+
+
+def test_read_files_numbers_lines(tmp_path):
+    _numbered_file(tmp_path, "a.txt", 3)
+    result = read_files(tmp_path, "a.txt")
+    assert result["stdout"] == "1| line 1\n2| line 2\n3| line 3"
+
+
+def test_read_files_under_cap_has_no_truncation_footer(tmp_path):
+    _numbered_file(tmp_path, "a.txt", 5)
+    result = read_files(tmp_path, "a.txt")
+    assert "truncated" not in result["stdout"]
+
+
+def test_read_files_truncates_at_cap_and_reports_total(tmp_path):
+    total = DEFAULT_MAX_READ_LINES + 50
+    _numbered_file(tmp_path, "big.log", total)
+    result = read_files(tmp_path, "big.log")
+    assert result["exit_code"] == 0
+    body, footer = result["stdout"].rsplit("\n", 1)
+    assert len(body.splitlines()) == DEFAULT_MAX_READ_LINES
+    assert body.splitlines()[-1].endswith(f"| line {DEFAULT_MAX_READ_LINES}")
+    assert str(total) in footer
+    assert "read_file_range" in footer
+
+
+def test_read_file_range_returns_requested_span_numbered_from_start(tmp_path):
+    _numbered_file(tmp_path, "a.txt", 10)
+    result = read_file_range(tmp_path, "a.txt", 3, 5)
+    assert result["exit_code"] == 0
+    body, footer = result["stdout"].rsplit("\n", 1)
+    assert body == "3| line 3\n4| line 4\n5| line 5"
+    assert footer == "[lines 3-5 of 10]"
+
+
+def test_read_file_range_clamps_end_line_past_eof(tmp_path):
+    _numbered_file(tmp_path, "a.txt", 4)
+    result = read_file_range(tmp_path, "a.txt", 3, 999)
+    assert result["exit_code"] == 0
+    assert result["stdout"].endswith("[lines 3-4 of 4]")
+
+
+def test_read_file_range_clamps_span_wider_than_cap(tmp_path):
+    total = DEFAULT_MAX_READ_LINES * 2
+    _numbered_file(tmp_path, "big.log", total)
+    result = read_file_range(tmp_path, "big.log", 1, total)
+    body = result["stdout"].rsplit("\n", 1)[0]
+    assert len(body.splitlines()) == DEFAULT_MAX_READ_LINES
+
+
+def test_read_file_range_start_past_eof_is_an_error(tmp_path):
+    _numbered_file(tmp_path, "a.txt", 4)
+    result = read_file_range(tmp_path, "a.txt", 99, 120)
+    assert result["exit_code"] == 1
+    assert "4" in result["stderr"]
+
+
+def test_read_file_range_rejects_invalid_bounds(tmp_path):
+    _numbered_file(tmp_path, "a.txt", 4)
+    assert read_file_range(tmp_path, "a.txt", 0, 3)["exit_code"] == 1
+    assert read_file_range(tmp_path, "a.txt", 3, 2)["exit_code"] == 1
+
+
+def test_read_file_range_missing_file(tmp_path):
+    result = read_file_range(tmp_path, "missing.txt", 1, 5)
+    assert result["exit_code"] == 1
+    assert "not found" in result["stderr"].lower()
+
+
+def test_read_file_range_binary_file_returns_error(tmp_path):
+    (tmp_path / "archive.tar").write_bytes(b"\x00\xa3\xff binary")
+    result = read_file_range(tmp_path, "archive.tar", 1, 5)
+    assert result["exit_code"] == 1
+    assert result["stdout"] == ""
+
+
+def test_read_file_range_denies_parent_traversal(tmp_path):
+    result = read_file_range(tmp_path, "../secret.txt", 1, 5)
     assert result["exit_code"] == 1
     assert "Access Denied" in result["stderr"]

@@ -29,7 +29,7 @@ def test_execute_tool_list_files_empty_directory(tmp_path):
 def test_execute_tool_read_files(tmp_path):
     (tmp_path / "a.txt").write_text("hello world")
     result = agent_tools.execute_tool("read_files", {"path": "a.txt"}, tmp_path)
-    assert result == "hello world"
+    assert result == "1| hello world"
 
 
 def test_execute_tool_read_files_missing(tmp_path):
@@ -277,3 +277,57 @@ def test_execute_tool_replace_in_file(tmp_path):
     )
     assert (tmp_path / "a.txt").read_text() == "alpha\ndelta\n"
     assert "replace" in result.lower()
+
+
+def test_tool_schemas_include_read_file_range():
+    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
+    assert "read_file_range" in names
+
+
+def test_read_file_range_schema_requires_only_path():
+    schema = next(
+        t for t in agent_tools.TOOL_SCHEMAS if t["function"]["name"] == "read_file_range"
+    )
+    assert schema["function"]["parameters"]["required"] == ["path"]
+
+
+def test_execute_tool_read_file_range(tmp_path):
+    (tmp_path / "a.txt").write_text("one\ntwo\nthree\n")
+    result = agent_tools.execute_tool(
+        "read_file_range", {"path": "a.txt", "start_line": 2, "end_line": 3}, tmp_path
+    )
+    assert "2| two" in result
+    assert "3| three" in result
+    assert "one" not in result
+
+
+def test_execute_tool_read_file_range_defaults_to_start_of_file(tmp_path):
+    (tmp_path / "a.txt").write_text("one\ntwo\n")
+    result = agent_tools.execute_tool("read_file_range", {"path": "a.txt"}, tmp_path)
+    assert "1| one" in result
+
+
+def test_system_prompt_leads_the_conversation(tmp_path):
+    calls = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls.append(messages)
+        return {"content": "ok", "model": "test-model", "status": "success"}
+
+    agent_tools.run_agent_turn(fake_call_llm, "do a thing", tmp_path)
+
+    assert calls[0][0] == {"role": "system", "content": agent_tools.SYSTEM_PROMPT}
+    assert calls[0][1] == {"role": "user", "content": "do a thing"}
+
+
+def test_system_prompt_stays_small():
+    assert len(agent_tools.SYSTEM_PROMPT) < 600
+
+
+def test_tool_descriptions_stay_terse():
+    too_long = {
+        tool["function"]["name"]: len(tool["function"]["description"])
+        for tool in agent_tools.TOOL_SCHEMAS
+        if len(tool["function"]["description"]) > 160
+    }
+    assert too_long == {}
