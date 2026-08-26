@@ -77,6 +77,42 @@ def read_files(root: Path, path: str) -> dict[str, str | int]:
     return {"stdout": content, "stderr": "", "exit_code": 0}
 
 
+def replace_in_file(root: Path, path: str, old_str: str, new_str: str) -> dict[str, str | int]:
+    if not old_str:
+        return {"stdout": "", "stderr": "Error: 'old_str' must not be empty.", "exit_code": 1}
+    target = _resolve_path(root, path)
+    if target is None:
+        return _access_denied(path)
+    if not target.is_file():
+        return {"stdout": "", "stderr": f"File not found: '{path}'", "exit_code": 1}
+    try:
+        content = target.read_text()
+    except UnicodeDecodeError:
+        return {
+            "stdout": "",
+            "stderr": f"Cannot edit '{path}': not UTF-8 text (binary file).",
+            "exit_code": 1,
+        }
+    occurrences = content.count(old_str)
+    if occurrences == 0:
+        return {
+            "stdout": "",
+            "stderr": f"No match for 'old_str' in '{path}'.",
+            "exit_code": 1,
+        }
+    if occurrences > 1:
+        return {
+            "stdout": "",
+            "stderr": (
+                f"'old_str' is ambiguous in '{path}': found {occurrences} matches. "
+                "Include surrounding lines to make it unique."
+            ),
+            "exit_code": 1,
+        }
+    target.write_text(content.replace(old_str, new_str))
+    return {"stdout": f"Replaced 1 occurrence in '{path}'", "stderr": "", "exit_code": 0}
+
+
 def write_files(root: Path, path: str, content: str) -> dict[str, str | int]:
     target = _resolve_path(root, path)
     if target is None:

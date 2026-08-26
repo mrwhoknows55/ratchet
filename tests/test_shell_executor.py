@@ -2,6 +2,7 @@ from ratchet.shell.executor import (
     delete_file,
     list_files,
     read_files,
+    replace_in_file,
     run_command,
     search_files,
     write_files,
@@ -182,3 +183,59 @@ def test_read_files_binary_file_returns_error_instead_of_raising(tmp_path):
     assert result["exit_code"] == 1
     assert result["stdout"] == ""
     assert "archive.tar" in result["stderr"]
+
+
+def test_replace_in_file_replaces_unique_match(tmp_path):
+    (tmp_path / "a.txt").write_text("alpha\nbeta\ngamma\n")
+    result = replace_in_file(tmp_path, "a.txt", "beta", "delta")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "a.txt").read_text() == "alpha\ndelta\ngamma\n"
+
+
+def test_replace_in_file_matches_across_lines(tmp_path):
+    (tmp_path / "c.toml").write_text("[model]\ntimeout = 10\n\n[other]\ntimeout = 10\n")
+    result = replace_in_file(tmp_path, "c.toml", "[model]\ntimeout = 10", "[model]\ntimeout = 30")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "c.toml").read_text() == "[model]\ntimeout = 30\n\n[other]\ntimeout = 10\n"
+
+
+def test_replace_in_file_rejects_ambiguous_match_and_leaves_file_untouched(tmp_path):
+    original = "timeout = 10\ntimeout = 10\ntimeout = 10\n"
+    (tmp_path / "c.toml").write_text(original)
+    result = replace_in_file(tmp_path, "c.toml", "timeout = 10", "timeout = 30")
+    assert result["exit_code"] == 1
+    assert "3" in result["stderr"]
+    assert (tmp_path / "c.toml").read_text() == original
+
+
+def test_replace_in_file_rejects_missing_match(tmp_path):
+    (tmp_path / "a.txt").write_text("alpha\n")
+    result = replace_in_file(tmp_path, "a.txt", "nope", "x")
+    assert result["exit_code"] == 1
+    assert (tmp_path / "a.txt").read_text() == "alpha\n"
+
+
+def test_replace_in_file_rejects_empty_old_str(tmp_path):
+    (tmp_path / "a.txt").write_text("alpha\n")
+    result = replace_in_file(tmp_path, "a.txt", "", "x")
+    assert result["exit_code"] == 1
+    assert (tmp_path / "a.txt").read_text() == "alpha\n"
+
+
+def test_replace_in_file_missing_file(tmp_path):
+    result = replace_in_file(tmp_path, "missing.txt", "a", "b")
+    assert result["exit_code"] == 1
+    assert "not found" in result["stderr"].lower()
+
+
+def test_replace_in_file_binary_file_returns_error(tmp_path):
+    (tmp_path / "archive.tar").write_bytes(b"\x00\xa3\xff binary")
+    result = replace_in_file(tmp_path, "archive.tar", "a", "b")
+    assert result["exit_code"] == 1
+    assert result["stdout"] == ""
+
+
+def test_replace_in_file_denies_parent_traversal(tmp_path):
+    result = replace_in_file(tmp_path, "../secret.txt", "a", "b")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]

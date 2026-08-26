@@ -254,3 +254,26 @@ def test_run_agent_turn_falls_back_to_default_max_steps_without_agent_section(
 def test_default_max_steps_is_twelve():
     assert agent_tools.DEFAULT_MAX_STEPS == 12
     assert agent_config.DEFAULT_CONFIG["agent"]["max_steps"] == 12
+
+
+def test_tool_schemas_include_replace_in_file():
+    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
+    assert "replace_in_file" in names
+
+
+def test_replace_in_file_schema_requires_all_three_arguments():
+    schema = next(
+        t for t in agent_tools.TOOL_SCHEMAS if t["function"]["name"] == "replace_in_file"
+    )
+    assert schema["function"]["parameters"]["required"] == ["path", "old_str", "new_str"]
+
+
+def test_execute_tool_replace_in_file(tmp_path):
+    (tmp_path / "a.txt").write_text("alpha\nbeta\n")
+    result = agent_tools.execute_tool(
+        "replace_in_file",
+        {"path": "a.txt", "old_str": "beta", "new_str": "delta"},
+        tmp_path,
+    )
+    assert (tmp_path / "a.txt").read_text() == "alpha\ndelta\n"
+    assert "replace" in result.lower()

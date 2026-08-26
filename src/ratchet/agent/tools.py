@@ -7,6 +7,7 @@ from ratchet.shell.executor import (
     delete_file,
     list_files,
     read_files,
+    replace_in_file,
     search_files,
     write_files,
 )
@@ -64,6 +65,29 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "replace_in_file",
+            "description": (
+                "Replace an exact string in a file in the sandbox. 'old_str' must occur "
+                "exactly once; include surrounding lines to make it unique. Fails without "
+                "changing the file if 'old_str' is missing or matches more than once."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    **_PATH_PROPERTY,
+                    "old_str": {
+                        "type": "string",
+                        "description": "Exact text to replace, unique within the file.",
+                    },
+                    "new_str": {"type": "string", "description": "Replacement text."},
+                },
+                "required": ["path", "old_str", "new_str"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "delete_file",
             "description": "Delete a file in the sandboxed working directory.",
             "parameters": {"type": "object", "properties": _PATH_PROPERTY, "required": ["path"]},
@@ -81,6 +105,10 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
         result = read_files(sandbox_root, arguments["path"])
     elif name == "write_files":
         result = write_files(sandbox_root, arguments["path"], arguments["content"])
+    elif name == "replace_in_file":
+        result = replace_in_file(
+            sandbox_root, arguments["path"], arguments["old_str"], arguments["new_str"]
+        )
     elif name == "delete_file":
         result = delete_file(sandbox_root, arguments["path"])
     else:
