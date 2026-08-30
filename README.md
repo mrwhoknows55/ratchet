@@ -22,7 +22,7 @@ commands checklist.
 Tasks to be benchmarked on (taken from terminal-bench):
 
 - [working] Create a file called `hello.txt` in the current directory. Write "Hello, world!" to it. Make sure it ends in a newline. Don't make any other files or folders.
-- [wip/todo] Extract the contents of the solution from `archive.tar` and write it to `app/solution.txt`.
+- [working] Extract the contents of the solution from `archive.tar` and write it to `app/solution.txt`.
 - [wip/todo] Instructions:
   - Create a new spreadsheet named "Financial Report"
   - Create a sheet in this spreadsheet named "Q1 Data"
