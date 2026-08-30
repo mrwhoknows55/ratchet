@@ -374,3 +374,15 @@ def test_execute_tool_file_search_scopes_to_path(tmp_path):
         "file_search", {"pattern": "*.py", "path": "sub"}, tmp_path
     )
     assert result == "sub/c.py"
+
+
+def test_execute_tool_run_command_reports_exit_code_when_silent(tmp_path):
+    result = agent_tools.execute_tool("run_command", {"command": "touch made.txt"}, tmp_path)
+    assert result == "(no output, exit 0)"
+    assert (tmp_path / "made.txt").exists()
+
+
+def test_execute_tool_run_command_appends_nonzero_exit_code(tmp_path):
+    result = agent_tools.execute_tool("run_command", {"command": "cat missing.txt"}, tmp_path)
+    assert "[exit 1]" in result
+    assert "missing.txt" in result

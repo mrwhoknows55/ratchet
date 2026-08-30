@@ -204,7 +204,16 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
         result = run_command(arguments["command"], sandbox_root)
     else:
         return f"Error: unknown tool '{name}'"
-    return (str(result["stdout"]) + str(result["stderr"])).strip() or "(no output)"
+
+    output = (str(result["stdout"]) + str(result["stderr"])).strip()
+    if name == "run_command":
+        exit_code = result["exit_code"]
+        if not output:
+            return f"(no output, exit {exit_code})"
+        if exit_code != 0:
+            return f"{output}\n[exit {exit_code}]"
+        return output
+    return output or "(no output)"
 
 
 def run_agent_turn(
