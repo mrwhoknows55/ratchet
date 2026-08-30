@@ -386,3 +386,11 @@ def test_execute_tool_run_command_appends_nonzero_exit_code(tmp_path):
     result = agent_tools.execute_tool("run_command", {"command": "cat missing.txt"}, tmp_path)
     assert "[exit 1]" in result
     assert "missing.txt" in result
+
+
+def test_system_prompt_directs_uncovered_work_to_run_command():
+    assert "run_command" in agent_tools.SYSTEM_PROMPT
+
+
+def test_system_prompt_discourages_repeat_calls():
+    assert "repeat" in agent_tools.SYSTEM_PROMPT

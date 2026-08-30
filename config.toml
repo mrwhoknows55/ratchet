@@ -3,7 +3,7 @@ provider = "lmstudio"
 base_url = "http://localhost:1234/v1"
 name = "google/gemma-4-12b"
 api_key = "not-needed"
-timeout = 30
+timeout = 40
 
 [agent]
 max_steps = 12
