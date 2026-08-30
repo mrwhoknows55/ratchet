@@ -52,14 +52,7 @@ def run_command(command: str, root: Path) -> dict[str, str | int]:
 
     for token in command_str.split():
         if token.startswith("/") or ".." in token:
-            return {
-                "stdout": "",
-                "stderr": (
-                    f"Access Denied: Path traversal or absolute path '{token}' "
-                    "forbidden outside sandbox."
-                ),
-                "exit_code": 1,
-            }
+            return _access_denied(token)
 
     args = shlex.split(command_str)
     try:
