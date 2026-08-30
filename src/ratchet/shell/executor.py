@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 DEFAULT_MAX_READ_LINES = 200
+DEFAULT_MAX_SEARCH_RESULTS = 100
 
 
 def _resolve_path(root: Path, relative: str) -> Path | None:
@@ -189,3 +190,34 @@ def search_files(root: Path, pattern: str) -> dict[str, str | int]:
         return {"stdout": result.stdout, "stderr": result.stderr, "exit_code": result.returncode}
     except Exception as e:
         return {"stdout": "", "stderr": f"Execution error: {e}", "exit_code": 1}
+
+
+def file_search(root: Path, pattern: str, path: str = ".") -> dict[str, str | int]:
+    if not pattern:
+        return {"stdout": "", "stderr": "Error: 'pattern' must not be empty.", "exit_code": 1}
+    if "/" in pattern or ".." in pattern:
+        return {
+            "stdout": "",
+            "stderr": (
+                f"Error: 'pattern' must be a bare name glob without '/' or '..': '{pattern}'. "
+                "Use 'path' to scope the search to a subdirectory."
+            ),
+            "exit_code": 1,
+        }
+
+    target = _resolve_path(root, path)
+    if target is None:
+        return _access_denied(path)
+    if not target.is_dir():
+        return {"stdout": "", "stderr": f"Directory not found: '{path}'", "exit_code": 1}
+
+    matches = sorted(str(match.relative_to(root)) for match in target.rglob(pattern))
+    if not matches:
+        return {"stdout": f"No files matching '{pattern}'", "stderr": "", "exit_code": 0}
+
+    total = len(matches)
+    if total > DEFAULT_MAX_SEARCH_RESULTS:
+        body = "\n".join(matches[:DEFAULT_MAX_SEARCH_RESULTS])
+        footer = f"[truncated: showing {DEFAULT_MAX_SEARCH_RESULTS} of {total} matches.]"
+        return {"stdout": f"{body}\n{footer}", "stderr": "", "exit_code": 0}
+    return {"stdout": "\n".join(matches), "stderr": "", "exit_code": 0}

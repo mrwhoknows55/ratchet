@@ -5,6 +5,7 @@ from typing import Callable
 from ratchet.agent.config import load_config
 from ratchet.shell.executor import (
     delete_file,
+    file_search,
     list_files,
     read_file_range,
     read_files,
@@ -131,6 +132,30 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "file_search",
+            "description": (
+                "Find files by name glob, recursively. Pattern is a bare name like "
+                "'*.py'; use path to scope to a subdirectory."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Name glob, e.g. '*.py'. No '/' or '..'.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Subdirectory to search under. Defaults to the root.",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_command",
             "description": (
                 "Run one command in the sandbox. No pipes, redirects, globs or shell "
@@ -173,6 +198,8 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
         )
     elif name == "delete_file":
         result = delete_file(sandbox_root, arguments["path"])
+    elif name == "file_search":
+        result = file_search(sandbox_root, arguments["pattern"], arguments.get("path", "."))
     elif name == "run_command":
         result = run_command(arguments["command"], sandbox_root)
     else:

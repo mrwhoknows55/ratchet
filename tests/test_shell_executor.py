@@ -1,6 +1,8 @@
 from ratchet.shell.executor import (
     DEFAULT_MAX_READ_LINES,
+    DEFAULT_MAX_SEARCH_RESULTS,
     delete_file,
+    file_search,
     list_files,
     read_file_range,
     read_files,
@@ -325,3 +327,74 @@ def test_read_file_range_denies_parent_traversal(tmp_path):
     result = read_file_range(tmp_path, "../secret.txt", 1, 5)
     assert result["exit_code"] == 1
     assert "Access Denied" in result["stderr"]
+
+
+def test_file_search_matches_by_glob(tmp_path):
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.txt").write_text("")
+    result = file_search(tmp_path, "*.py")
+    assert result["exit_code"] == 0
+    assert "a.py" in result["stdout"]
+    assert "b.txt" not in result["stdout"]
+
+
+def test_file_search_recurses_into_subdirectories(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.py").write_text("")
+    result = file_search(tmp_path, "*.py")
+    assert result["stdout"].strip() == "sub/c.py"
+
+
+def test_file_search_scopes_to_path_argument(tmp_path):
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.py").write_text("")
+    result = file_search(tmp_path, "*.py", "sub")
+    assert result["stdout"].strip() == "sub/c.py"
+
+
+def test_file_search_rejects_pattern_with_separator(tmp_path):
+    result = file_search(tmp_path, "sub/*.py")
+    assert result["exit_code"] == 1
+    assert "pattern" in result["stderr"].lower()
+
+
+def test_file_search_rejects_pattern_with_parent_traversal(tmp_path):
+    result = file_search(tmp_path, "..")
+    assert result["exit_code"] == 1
+    assert "pattern" in result["stderr"].lower()
+
+
+def test_file_search_rejects_empty_pattern(tmp_path):
+    result = file_search(tmp_path, "")
+    assert result["exit_code"] == 1
+    assert "pattern" in result["stderr"].lower()
+
+
+def test_file_search_denies_path_traversal(tmp_path):
+    result = file_search(tmp_path, "*.py", "../outside")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_file_search_missing_directory(tmp_path):
+    result = file_search(tmp_path, "*.py", "nope")
+    assert result["exit_code"] == 1
+    assert "not found" in result["stderr"].lower()
+
+
+def test_file_search_reports_no_matches(tmp_path):
+    (tmp_path / "a.py").write_text("")
+    result = file_search(tmp_path, "*.rs")
+    assert result["exit_code"] == 0
+    assert "no files matching" in result["stdout"].lower()
+
+
+def test_file_search_truncates_long_result_list(tmp_path):
+    total = DEFAULT_MAX_SEARCH_RESULTS + 5
+    for n in range(total):
+        (tmp_path / f"f{n:04d}.py").write_text("")
+    result = file_search(tmp_path, "*.py")
+    lines = result["stdout"].splitlines()
+    assert len(lines) == DEFAULT_MAX_SEARCH_RESULTS + 1
+    assert f"of {total}" in lines[-1]

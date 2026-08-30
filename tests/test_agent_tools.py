@@ -347,3 +347,30 @@ def test_execute_tool_run_command(tmp_path):
     (tmp_path / "a.txt").write_text("hello from sandbox\n")
     result = agent_tools.execute_tool("run_command", {"command": "cat a.txt"}, tmp_path)
     assert "hello from sandbox" in result
+
+
+def test_tool_schemas_include_file_search():
+    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
+    assert "file_search" in names
+
+
+def test_file_search_schema_requires_only_pattern():
+    schema = next(t for t in agent_tools.TOOL_SCHEMAS if t["function"]["name"] == "file_search")
+    assert schema["function"]["parameters"]["required"] == ["pattern"]
+
+
+def test_execute_tool_file_search(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.py").write_text("")
+    result = agent_tools.execute_tool("file_search", {"pattern": "*.py"}, tmp_path)
+    assert result == "sub/c.py"
+
+
+def test_execute_tool_file_search_scopes_to_path(tmp_path):
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.py").write_text("")
+    result = agent_tools.execute_tool(
+        "file_search", {"pattern": "*.py", "path": "sub"}, tmp_path
+    )
+    assert result == "sub/c.py"
