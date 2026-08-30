@@ -22,10 +22,13 @@ SYSTEM_PROMPT = (
     "Look before you change: read or list what you need first. "
     "Prefer the narrowest tool that does the job, and edit files in place "
     "rather than rewriting them whole. "
-    "File contents come back line-numbered as 'N| '; that prefix is display "
-    "only and is not part of the file. "
+    "File contents come back line-numbered as 'N| '; the prefix is not part "
+    "of the file. "
+    "Anything the other tools do not cover - unpacking an archive, running a "
+    "script - goes through run_command. "
     "If a call fails, read the error and adjust your next one instead of "
-    "repeating it. Stop and answer once the task is done."
+    "repeating it. Never report a result you have not read back. "
+    "Stop and answer once the task is done."
 )
 
 _PATH_PROPERTY = {"path": {"type": "string", "description": "Path relative to the sandbox root."}}
