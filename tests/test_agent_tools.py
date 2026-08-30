@@ -331,3 +331,19 @@ def test_tool_descriptions_stay_terse():
         if len(tool["function"]["description"]) > 160
     }
     assert too_long == {}
+
+
+def test_tool_schemas_include_run_command():
+    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
+    assert "run_command" in names
+
+
+def test_run_command_schema_requires_command():
+    schema = next(t for t in agent_tools.TOOL_SCHEMAS if t["function"]["name"] == "run_command")
+    assert schema["function"]["parameters"]["required"] == ["command"]
+
+
+def test_execute_tool_run_command(tmp_path):
+    (tmp_path / "a.txt").write_text("hello from sandbox\n")
+    result = agent_tools.execute_tool("run_command", {"command": "cat a.txt"}, tmp_path)
+    assert "hello from sandbox" in result

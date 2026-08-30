@@ -9,6 +9,7 @@ from ratchet.shell.executor import (
     read_file_range,
     read_files,
     replace_in_file,
+    run_command,
     search_files,
     write_files,
 )
@@ -127,6 +128,26 @@ TOOL_SCHEMAS = [
             "parameters": {"type": "object", "properties": _PATH_PROPERTY, "required": ["path"]},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": (
+                "Run one command in the sandbox. No pipes, redirects, globs or shell "
+                "operators; 10s timeout."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Command with arguments, e.g. 'python main.py'.",
+                    }
+                },
+                "required": ["command"],
+            },
+        },
+    },
 ]
 
 
@@ -152,6 +173,8 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
         )
     elif name == "delete_file":
         result = delete_file(sandbox_root, arguments["path"])
+    elif name == "run_command":
+        result = run_command(arguments["command"], sandbox_root)
     else:
         return f"Error: unknown tool '{name}'"
     return (str(result["stdout"]) + str(result["stderr"])).strip() or "(no output)"
