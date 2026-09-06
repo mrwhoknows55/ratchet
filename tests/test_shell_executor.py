@@ -2,6 +2,7 @@ from ratchet.shell.executor import (
     BACKUP_DIR,
     DEFAULT_MAX_READ_LINES,
     DEFAULT_MAX_SEARCH_RESULTS,
+    append_file,
     delete_file,
     file_search,
     list_files,
@@ -482,3 +483,33 @@ def test_search_files_skips_the_backup_directory(tmp_path):
     write_files(tmp_path, "a.txt", "haystack")
     result = search_files(tmp_path, "needle")
     assert BACKUP_DIR not in result["stdout"]
+
+
+def test_append_file_adds_to_existing_content(tmp_path):
+    (tmp_path / "a.txt").write_text("line1\n")
+    result = append_file(tmp_path, "a.txt", "line2\n")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "a.txt").read_text() == "line1\nline2\n"
+
+
+def test_append_file_creates_missing_file_and_parents(tmp_path):
+    result = append_file(tmp_path, "sub/a.txt", "line1\n")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "sub" / "a.txt").read_text() == "line1\n"
+
+
+def test_append_file_snapshots_existing_content(tmp_path):
+    (tmp_path / "a.txt").write_text("line1\n")
+    append_file(tmp_path, "a.txt", "line2\n")
+    assert (tmp_path / BACKUP_DIR / "a.txt").read_text() == "line1\n"
+
+
+def test_append_file_reports_bytes_appended(tmp_path):
+    result = append_file(tmp_path, "a.txt", "abc")
+    assert "3" in result["stdout"]
+
+
+def test_append_file_denies_path_traversal(tmp_path):
+    result = append_file(tmp_path, "../a.txt", "x")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]

@@ -193,6 +193,21 @@ def write_files(root: Path, path: str, content: str) -> dict[str, str | int]:
     return {"stdout": f"Wrote {len(content)} bytes to '{path}'", "stderr": "", "exit_code": 0}
 
 
+def append_file(root: Path, path: str, content: str) -> dict[str, str | int]:
+    target = _resolve_path(root, path)
+    if target is None:
+        return _access_denied(path)
+    backup_file(root, target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a") as handle:
+        handle.write(content)
+    return {
+        "stdout": f"Appended {len(content)} bytes to '{path}'",
+        "stderr": "",
+        "exit_code": 0,
+    }
+
+
 def delete_file(root: Path, path: str) -> dict[str, str | int]:
     target = _resolve_path(root, path)
     if target is None:

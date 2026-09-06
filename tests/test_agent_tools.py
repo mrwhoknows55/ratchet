@@ -413,3 +413,17 @@ def test_execute_tool_rollback_file_without_snapshot(tmp_path):
     (tmp_path / "a.txt").write_text("v1")
     result = agent_tools.execute_tool("rollback_file", {"path": "a.txt"}, tmp_path)
     assert "No snapshot" in result
+
+
+def test_tool_schemas_include_append_file():
+    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
+    assert "append_file" in names
+
+
+def test_execute_tool_append_file(tmp_path):
+    (tmp_path / "a.txt").write_text("line1\n")
+    result = agent_tools.execute_tool(
+        "append_file", {"path": "a.txt", "content": "line2\n"}, tmp_path
+    )
+    assert "Appended" in result
+    assert (tmp_path / "a.txt").read_text() == "line1\nline2\n"

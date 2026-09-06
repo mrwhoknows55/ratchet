@@ -4,6 +4,7 @@ from typing import Callable
 
 from ratchet.agent.config import load_config
 from ratchet.shell.executor import (
+    append_file,
     delete_file,
     file_search,
     list_files,
@@ -128,6 +129,24 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "append_file",
+            "description": (
+                "Append text to the end of a file, creating it if needed. Use this "
+                "instead of rewriting the whole file to add to it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    **_PATH_PROPERTY,
+                    "content": {"type": "string", "description": "Text to append."},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "delete_file",
             "description": "Delete a file in the sandboxed working directory.",
             "parameters": {"type": "object", "properties": _PATH_PROPERTY, "required": ["path"]},
@@ -211,6 +230,8 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
         result = replace_in_file(
             sandbox_root, arguments["path"], arguments["old_str"], arguments["new_str"]
         )
+    elif name == "append_file":
+        result = append_file(sandbox_root, arguments["path"], arguments["content"])
     elif name == "delete_file":
         result = delete_file(sandbox_root, arguments["path"])
     elif name == "file_search":
