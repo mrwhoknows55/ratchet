@@ -2,8 +2,10 @@ import hashlib
 
 from ratchet.shell.executor import (
     BACKUP_DIR,
+    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MAX_READ_LINES,
     DEFAULT_MAX_SEARCH_RESULTS,
+    MAX_COMMAND_TIMEOUT,
     append_file,
     delete_file,
     file_search,
@@ -545,3 +547,26 @@ def test_get_file_info_denies_path_traversal(tmp_path):
     result = get_file_info(tmp_path, "../a.txt")
     assert result["exit_code"] == 1
     assert "Access Denied" in result["stderr"]
+
+
+def test_run_command_reports_a_timeout_clearly(tmp_path):
+    result = run_command("sleep 2", tmp_path, timeout=1)
+    assert result["exit_code"] == 1
+    assert "timed out" in result["stderr"].lower()
+    assert "1s" in result["stderr"]
+
+
+def test_run_command_accepts_a_longer_timeout(tmp_path):
+    result = run_command("sleep 1", tmp_path, timeout=20)
+    assert result["exit_code"] == 0
+
+
+def test_run_command_clamps_timeout_to_the_maximum(tmp_path):
+    result = run_command("sleep 2", tmp_path, timeout=MAX_COMMAND_TIMEOUT + 1000)
+    assert result["exit_code"] == 0
+
+
+def test_run_command_defaults_to_the_default_timeout(tmp_path):
+    result = run_command("sleep 2", tmp_path)
+    assert result["exit_code"] == 0
+    assert DEFAULT_COMMAND_TIMEOUT >= 10

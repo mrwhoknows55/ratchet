@@ -16,6 +16,7 @@ DEFAULT_CONFIG = {
     },
     "agent": {
         "max_steps": 12,
+        "command_timeout": 10,
     },
 }
 

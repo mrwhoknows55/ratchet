@@ -22,6 +22,7 @@ Compared: `src/ratchet/agent/tools.py` (`TOOL_SCHEMAS`, 12 tools) against
 - **Backup / snapshot layer** — `backup_file`/`restore_backup` write to `sandbox/.backups/<relative path>`, filtered out of `list_files`, `file_search` and `search_files`. `write_files`, `replace_in_file` and `delete_file` snapshot first.
 - **`rollback_file`** — restores the last snapshot; errors when there is none.
 - **`append_file`** — appends without a rewrite, creates the file and parents when absent, snapshots first.
+- **`run_command` timeout** — per-call `timeout` arg, default `agent.command_timeout`, capped at 600s.
 - **`get_file_info`** — size, line count, mtime and sha256; `lines: -1` for binary. Absorbs `file_checksum`, which is no longer worth shipping separately.
 
 ## Missing from ratchet (4)

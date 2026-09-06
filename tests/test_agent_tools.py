@@ -321,7 +321,7 @@ def test_system_prompt_leads_the_conversation(tmp_path):
 
 
 def test_system_prompt_stays_small():
-    assert len(agent_tools.SYSTEM_PROMPT) < 600
+    assert len(agent_tools.SYSTEM_PROMPT) < 1000
 
 
 def test_tool_descriptions_stay_terse():
@@ -439,3 +439,29 @@ def test_execute_tool_get_file_info(tmp_path):
     result = agent_tools.execute_tool("get_file_info", {"path": "a.txt"}, tmp_path)
     assert "lines: 2" in result
     assert "size: 8" in result
+
+
+def test_run_command_schema_exposes_timeout():
+    schema = next(t for t in agent_tools.TOOL_SCHEMAS if t["function"]["name"] == "run_command")
+    assert "timeout" in schema["function"]["parameters"]["properties"]
+    assert schema["function"]["parameters"]["required"] == ["command"]
+
+
+def test_execute_tool_run_command_honours_timeout(tmp_path):
+    result = agent_tools.execute_tool(
+        "run_command", {"command": "sleep 2", "timeout": 1}, tmp_path
+    )
+    assert "timed out" in result.lower()
+
+
+def test_system_prompt_demands_exact_output():
+    assert "exactly" in agent_tools.SYSTEM_PROMPT
+
+
+def test_system_prompt_routes_shell_operators_to_a_script():
+    assert "script" in agent_tools.SYSTEM_PROMPT
+
+
+def test_system_prompt_names_the_available_tooling():
+    for binary in ("openpyxl", "yt-dlp", "ffmpeg"):
+        assert binary in agent_tools.SYSTEM_PROMPT

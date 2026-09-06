@@ -15,6 +15,7 @@ DEFAULT_MODEL_CONFIG = {
 
 DEFAULT_AGENT_CONFIG = {
     "max_steps": 12,
+    "command_timeout": 10,
 }
 
 

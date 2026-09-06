@@ -4,6 +4,8 @@ from typing import Callable
 
 from ratchet.agent.config import load_config
 from ratchet.shell.executor import (
+    DEFAULT_COMMAND_TIMEOUT,
+    MAX_COMMAND_TIMEOUT,
     append_file,
     delete_file,
     file_search,
@@ -20,6 +22,10 @@ from ratchet.shell.executor import (
 
 DEFAULT_MAX_STEPS = 12
 
+
+def _command_timeout() -> int:
+    return load_config().get("agent", {}).get("command_timeout", DEFAULT_COMMAND_TIMEOUT)
+
 SYSTEM_PROMPT = (
     "You are a coding agent in a sandboxed directory. "
     "Look before you change: read or list what you need first. "
@@ -27,9 +33,15 @@ SYSTEM_PROMPT = (
     "Prefer the narrowest tool, and edit files in place rather than "
     "rewriting them. "
     "Use run_command for what the file tools do not cover, such as reading "
-    "an archive's listing before unpacking it. "
+    "an archive's listing before unpacking it. It takes no pipes, redirects "
+    "or globs: for those, or for multi-step work, write a script with "
+    "write_files and run it. python (with openpyxl), yt-dlp and ffmpeg are "
+    "on PATH; downloads and encoding are slow, so raise timeout rather than "
+    "retrying. "
     "File contents are line-numbered as 'N| '; the prefix is not file content. "
     "If a call fails, read the error and adjust instead of retrying it. "
+    "Match the request exactly - the named path, the exact text, a trailing "
+    "newline when asked - and create nothing it did not ask for. "
     "Never report a result you have not read back. "
     "Stop and answer once the task is done."
 )
@@ -204,8 +216,8 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "run_command",
             "description": (
-                "Run one command in the sandbox. No pipes, redirects, globs or shell "
-                "operators; 10s timeout."
+                "Run one command in the sandbox. No pipes, redirects or globs - "
+                "write a script and run it. Raise timeout for slow work."
             ),
             "parameters": {
                 "type": "object",
@@ -213,7 +225,14 @@ TOOL_SCHEMAS = [
                     "command": {
                         "type": "string",
                         "description": "Command with arguments, e.g. 'python main.py'.",
-                    }
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": (
+                            f"Seconds to wait before killing the command. Defaults to "
+                            f"{DEFAULT_COMMAND_TIMEOUT}, capped at {MAX_COMMAND_TIMEOUT}."
+                        ),
+                    },
                 },
                 "required": ["command"],
             },
@@ -253,7 +272,9 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
     elif name == "rollback_file":
         result = rollback_file(sandbox_root, arguments["path"])
     elif name == "run_command":
-        result = run_command(arguments["command"], sandbox_root)
+        result = run_command(
+            arguments["command"], sandbox_root, arguments.get("timeout", _command_timeout())
+        )
     else:
         return f"Error: unknown tool '{name}'"
 

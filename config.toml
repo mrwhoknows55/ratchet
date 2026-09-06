@@ -7,6 +7,7 @@ timeout = 40
 
 [agent]
 max_steps = 12
+command_timeout = 60
 
 [models.lmstudio]
 name = "qwen/qwen3-4b-2507"

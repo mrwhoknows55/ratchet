@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 
 BACKUP_DIR = ".backups"
+DEFAULT_COMMAND_TIMEOUT = 10
+MAX_COMMAND_TIMEOUT = 600
 DEFAULT_MAX_READ_LINES = 200
 DEFAULT_MAX_SEARCH_RESULTS = 100
 
@@ -68,7 +70,7 @@ def _access_denied(path: str) -> dict[str, str | int]:
     }
 
 
-def run_command(command: str, root: Path) -> dict[str, str | int]:
+def run_command(command: str, root: Path, timeout: int | None = None) -> dict[str, str | int]:
     root.mkdir(parents=True, exist_ok=True)
 
     command_str = command.strip()
@@ -79,6 +81,7 @@ def run_command(command: str, root: Path) -> dict[str, str | int]:
         if token.startswith("/") or ".." in token:
             return _access_denied(token)
 
+    limit = min(timeout or DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT)
     args = shlex.split(command_str)
     try:
         result = subprocess.run(
@@ -86,9 +89,18 @@ def run_command(command: str, root: Path) -> dict[str, str | int]:
             cwd=root,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=limit,
         )
         return {"stdout": result.stdout, "stderr": result.stderr, "exit_code": result.returncode}
+    except subprocess.TimeoutExpired:
+        return {
+            "stdout": "",
+            "stderr": (
+                f"Command timed out after {limit}s. Pass a larger 'timeout' "
+                f"(up to {MAX_COMMAND_TIMEOUT}s) for slow work like downloads."
+            ),
+            "exit_code": 1,
+        }
     except FileNotFoundError:
         return {"stdout": "", "stderr": f"Command not found: '{args[0]}'", "exit_code": 127}
     except Exception as e:
