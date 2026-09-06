@@ -427,3 +427,15 @@ def test_execute_tool_append_file(tmp_path):
     )
     assert "Appended" in result
     assert (tmp_path / "a.txt").read_text() == "line1\nline2\n"
+
+
+def test_tool_schemas_include_get_file_info():
+    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
+    assert "get_file_info" in names
+
+
+def test_execute_tool_get_file_info(tmp_path):
+    (tmp_path / "a.txt").write_text("one\ntwo\n")
+    result = agent_tools.execute_tool("get_file_info", {"path": "a.txt"}, tmp_path)
+    assert "lines: 2" in result
+    assert "size: 8" in result

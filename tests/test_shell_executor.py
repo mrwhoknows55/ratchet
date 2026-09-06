@@ -1,3 +1,5 @@
+import hashlib
+
 from ratchet.shell.executor import (
     BACKUP_DIR,
     DEFAULT_MAX_READ_LINES,
@@ -5,6 +7,7 @@ from ratchet.shell.executor import (
     append_file,
     delete_file,
     file_search,
+    get_file_info,
     list_files,
     read_file_range,
     read_files,
@@ -511,5 +514,34 @@ def test_append_file_reports_bytes_appended(tmp_path):
 
 def test_append_file_denies_path_traversal(tmp_path):
     result = append_file(tmp_path, "../a.txt", "x")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_get_file_info_reports_size_lines_and_checksum(tmp_path):
+    (tmp_path / "a.txt").write_text("one\ntwo\nthree\n")
+    result = get_file_info(tmp_path, "a.txt")
+    assert result["exit_code"] == 0
+    assert "size: 14" in result["stdout"]
+    assert "lines: 3" in result["stdout"]
+    assert hashlib.sha256(b"one\ntwo\nthree\n").hexdigest() in result["stdout"]
+
+
+def test_get_file_info_reports_unknown_line_count_for_binary(tmp_path):
+    (tmp_path / "a.bin").write_bytes(b"\x00\xfe\xff")
+    result = get_file_info(tmp_path, "a.bin")
+    assert result["exit_code"] == 0
+    assert "lines: -1" in result["stdout"]
+    assert "size: 3" in result["stdout"]
+
+
+def test_get_file_info_missing_file(tmp_path):
+    result = get_file_info(tmp_path, "nope.txt")
+    assert result["exit_code"] == 1
+    assert "not found" in result["stderr"].lower()
+
+
+def test_get_file_info_denies_path_traversal(tmp_path):
+    result = get_file_info(tmp_path, "../a.txt")
     assert result["exit_code"] == 1
     assert "Access Denied" in result["stderr"]

@@ -7,6 +7,7 @@ from ratchet.shell.executor import (
     append_file,
     delete_file,
     file_search,
+    get_file_info,
     list_files,
     read_file_range,
     read_files,
@@ -56,6 +57,17 @@ TOOL_SCHEMAS = [
                 },
                 "required": ["pattern"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_file_info",
+            "description": (
+                "Report a file's size, line count, modified time and sha256 without "
+                "reading its contents. Line count is -1 for binary files."
+            ),
+            "parameters": {"type": "object", "properties": _PATH_PROPERTY, "required": ["path"]},
         },
     },
     {
@@ -215,6 +227,8 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
         result = list_files(sandbox_root)
     elif name == "search_files":
         result = search_files(sandbox_root, arguments["pattern"])
+    elif name == "get_file_info":
+        result = get_file_info(sandbox_root, arguments["path"])
     elif name == "read_files":
         result = read_files(sandbox_root, arguments["path"])
     elif name == "read_file_range":

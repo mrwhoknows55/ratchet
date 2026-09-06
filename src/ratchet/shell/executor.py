@@ -1,6 +1,8 @@
+import hashlib
 import shlex
 import shutil
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 BACKUP_DIR = ".backups"
@@ -217,6 +219,31 @@ def delete_file(root: Path, path: str) -> dict[str, str | int]:
     backup_file(root, target)
     target.unlink()
     return {"stdout": f"Deleted '{path}'", "stderr": "", "exit_code": 0}
+
+
+def get_file_info(root: Path, path: str) -> dict[str, str | int]:
+    target = _resolve_path(root, path)
+    if target is None:
+        return _access_denied(path)
+    if not target.is_file():
+        return {"stdout": "", "stderr": f"File not found: '{path}'", "exit_code": 1}
+
+    data = target.read_bytes()
+    try:
+        lines = len(data.decode().splitlines())
+    except UnicodeDecodeError:
+        lines = -1
+    modified = datetime.fromtimestamp(target.stat().st_mtime).isoformat(timespec="seconds")
+    report = "\n".join(
+        [
+            f"path: {path}",
+            f"size: {len(data)}",
+            f"lines: {lines}",
+            f"modified: {modified}",
+            f"sha256: {hashlib.sha256(data).hexdigest()}",
+        ]
+    )
+    return {"stdout": report, "stderr": "", "exit_code": 0}
 
 
 def search_files(root: Path, pattern: str) -> dict[str, str | int]:

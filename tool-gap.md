@@ -1,6 +1,6 @@
 # Tool Gap: ratchet vs hydraharness/src/06-harness
 
-Compared: `src/ratchet/agent/tools.py` (`TOOL_SCHEMAS`, 10 tools) against
+Compared: `src/ratchet/agent/tools.py` (`TOOL_SCHEMAS`, 12 tools) against
 `hydraharness/src/06-harness/agent/schemas.py` (`TOOLS_SCHEMA`, 17 tools).
 
 ## Present in both
@@ -21,16 +21,15 @@ Compared: `src/ratchet/agent/tools.py` (`TOOL_SCHEMAS`, 10 tools) against
 - **`run_command`** — registered as a model tool in `8e6c0a0`.
 - **Backup / snapshot layer** — `backup_file`/`restore_backup` write to `sandbox/.backups/<relative path>`, filtered out of `list_files`, `file_search` and `search_files`. `write_files`, `replace_in_file` and `delete_file` snapshot first.
 - **`rollback_file`** — restores the last snapshot; errors when there is none.
+- **`append_file`** — appends without a rewrite, creates the file and parents when absent, snapshots first.
+- **`get_file_info`** — size, line count, mtime and sha256; `lines: -1` for binary. Absorbs `file_checksum`, which is no longer worth shipping separately.
 
-## Missing from ratchet (7)
+## Missing from ratchet (4)
 
-1. **`append_file`** — append text without rewriting the file. Today appending means `read_files` + `write_files` of the whole content.
-2. **`get_file_info`** — metadata: size, line count, mtime, sha256. No way for the agent to check a file's size before reading it.
-3. **`copy_file`** — copy file or directory tree (`shutil.copytree` for dirs).
-4. **`move_file`** — move/rename file or directory.
-5. **`file_checksum`** — SHA-256 of a file, for verifying a write landed or comparing two files.
-6. **`search_web`** — live web search (hydraharness uses Tavily).
-7. **`fetch_url`** — fetch a URL as Markdown (Tavily Extract).
+1. **`copy_file`** — copy file or directory tree (`shutil.copytree` for dirs).
+2. **`move_file`** — move/rename file or directory.
+3. **`search_web`** — live web search (hydraharness uses Tavily).
+4. **`fetch_url`** — fetch a URL as Markdown (Tavily Extract).
 
 Also missing on tools that do exist: `delete_file` has no `recursive` for directories, `list_files` takes no path arg and returns no per-entry metadata, and `search_files` has no `path` scope arg.
 
@@ -58,11 +57,8 @@ Format: **how it works** — *what to consider when porting to ratchet*.
 
 - **`_resolve_path` flags** — add `must_exist`, `allow_dir`, `forbid_root` to `shell/executor.py:11`. *Consider: without `forbid_root`, `delete_file(".")` wipes the sandbox; without `allow_dir`, copy/move can't handle directories at all.*
 
-- **`append_file(path, content)`** — open in `"a"` mode, return bytes appended. *Consider: creates parent dirs and the file if absent, so it doubles as a create; back up first if the file already exists.*
-- **`get_file_info(path)`** — `stat()` for size/mtime plus a line count and sha256. *Consider: line counting reads the whole file, so it's not free on large files, and it throws on binary — hydraharness swallows that and returns `lines: -1`; ratchet already has binary-read handling in `read_files`, reuse that path.*
 - **`copy_file(src, dst)`** — `shutil.copy2` for files, `copytree(dirs_exist_ok=True)` for dirs. *Consider: both paths need separate validation (src `must_exist=True`, dst `must_exist=False`); `dirs_exist_ok` means copying onto an existing tree merges rather than errors — decide if you want that.*
 - **`move_file(src, dst)`** — `shutil.move` after backing up the source. *Consider: the backup is keyed to the old path, so a rollback after a move recreates the file at the source without removing the destination; document that or skip the backup here.*
-- **`file_checksum(path)`** — `hashlib.sha256(read_bytes())`. *Consider: reads the file fully into memory; chunk it if you ever allow large files. Mostly redundant with `get_file_info` — worth folding into it rather than shipping both.*
 - **`delete_file(path, recursive)`** — add dir support: back up + `unlink` for files, `rmtree` for dirs but only when `recursive=True` and the dir is non-empty. *Consider: directories can't be backed up by the file-level snapshot, so a recursive delete is genuinely irreversible — gate it behind `forbid_root` at minimum.*
 - **`list_dir(path)` vs ratchet's `list_files()`** — take a path arg and return size + line count per entry. *Consider: per-entry line counts mean reading every file in the dir; make it optional or drop it if listings get slow.*
 - **`grep_search(query, path)`** — compiles a Python `re` and walks files, returning file/line/text. *Consider: ratchet's `search_files` shells out to rg/grep, which is faster and already handles binaries — the real gap is just the missing `path` scope arg and structured output, not the engine.*
