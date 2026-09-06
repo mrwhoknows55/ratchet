@@ -3,6 +3,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+BACKUP_DIR = ".backups"
 DEFAULT_MAX_READ_LINES = 200
 DEFAULT_MAX_SEARCH_RESULTS = 100
 
@@ -32,6 +33,27 @@ def _read_lines(root: Path, path: str) -> tuple[list[str] | None, dict[str, str 
             "stderr": f"Cannot read '{path}': not UTF-8 text (binary file).",
             "exit_code": 1,
         }
+
+
+def _backup_path(root: Path, target: Path) -> Path:
+    return root / BACKUP_DIR / target.relative_to(root)
+
+
+def backup_file(root: Path, target: Path) -> None:
+    if not target.is_file():
+        return
+    snapshot = _backup_path(root, target)
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(target, snapshot)
+
+
+def restore_backup(root: Path, target: Path) -> bool:
+    snapshot = _backup_path(root, target)
+    if not snapshot.is_file():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(snapshot, target)
+    return True
 
 
 def _access_denied(path: str) -> dict[str, str | int]:
@@ -73,7 +95,7 @@ def run_command(command: str, root: Path) -> dict[str, str | int]:
 
 def list_files(root: Path) -> dict[str, str | int]:
     root.mkdir(parents=True, exist_ok=True)
-    names = sorted(entry.name for entry in root.iterdir())
+    names = sorted(entry.name for entry in root.iterdir() if entry.name != BACKUP_DIR)
     return {"stdout": "\n".join(names), "stderr": "", "exit_code": 0}
 
 
@@ -156,6 +178,7 @@ def replace_in_file(root: Path, path: str, old_str: str, new_str: str) -> dict[s
             ),
             "exit_code": 1,
         }
+    backup_file(root, target)
     target.write_text(content.replace(old_str, new_str))
     return {"stdout": f"Replaced 1 occurrence in '{path}'", "stderr": "", "exit_code": 0}
 
@@ -164,6 +187,7 @@ def write_files(root: Path, path: str, content: str) -> dict[str, str | int]:
     target = _resolve_path(root, path)
     if target is None:
         return _access_denied(path)
+    backup_file(root, target)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content)
     return {"stdout": f"Wrote {len(content)} bytes to '{path}'", "stderr": "", "exit_code": 0}
@@ -175,6 +199,7 @@ def delete_file(root: Path, path: str) -> dict[str, str | int]:
         return _access_denied(path)
     if not target.is_file():
         return {"stdout": "", "stderr": f"File not found: '{path}'", "exit_code": 1}
+    backup_file(root, target)
     target.unlink()
     return {"stdout": f"Deleted '{path}'", "stderr": "", "exit_code": 0}
 
@@ -182,9 +207,9 @@ def delete_file(root: Path, path: str) -> dict[str, str | int]:
 def search_files(root: Path, pattern: str) -> dict[str, str | int]:
     root.mkdir(parents=True, exist_ok=True)
     if shutil.which("rg"):
-        args = ["rg", "-n", pattern, "."]
+        args = ["rg", "-n", "--glob", f"!{BACKUP_DIR}", pattern, "."]
     else:
-        args = ["grep", "-rn", pattern, "."]
+        args = ["grep", "-rn", f"--exclude-dir={BACKUP_DIR}", pattern, "."]
     try:
         result = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=10)
         return {"stdout": result.stdout, "stderr": result.stderr, "exit_code": result.returncode}
@@ -211,7 +236,11 @@ def file_search(root: Path, pattern: str, path: str = ".") -> dict[str, str | in
     if not target.is_dir():
         return {"stdout": "", "stderr": f"Directory not found: '{path}'", "exit_code": 1}
 
-    matches = sorted(str(match.relative_to(root)) for match in target.rglob(pattern))
+    matches = sorted(
+        str(match.relative_to(root))
+        for match in target.rglob(pattern)
+        if BACKUP_DIR not in match.relative_to(root).parts
+    )
     if not matches:
         return {"stdout": f"No files matching '{pattern}'", "stderr": "", "exit_code": 0}
 
@@ -221,3 +250,20 @@ def file_search(root: Path, pattern: str, path: str = ".") -> dict[str, str | in
         footer = f"[truncated: showing {DEFAULT_MAX_SEARCH_RESULTS} of {total} matches.]"
         return {"stdout": f"{body}\n{footer}", "stderr": "", "exit_code": 0}
     return {"stdout": "\n".join(matches), "stderr": "", "exit_code": 0}
+
+
+def rollback_file(root: Path, path: str) -> dict[str, str | int]:
+    target = _resolve_path(root, path)
+    if target is None:
+        return _access_denied(path)
+    if not restore_backup(root, target):
+        return {
+            "stdout": "",
+            "stderr": f"No snapshot to restore for '{path}'.",
+            "exit_code": 1,
+        }
+    return {
+        "stdout": f"Restored '{path}' from its last snapshot",
+        "stderr": "",
+        "exit_code": 0,
+    }

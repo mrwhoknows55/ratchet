@@ -1,4 +1,5 @@
 from ratchet.shell.executor import (
+    BACKUP_DIR,
     DEFAULT_MAX_READ_LINES,
     DEFAULT_MAX_SEARCH_RESULTS,
     delete_file,
@@ -7,6 +8,7 @@ from ratchet.shell.executor import (
     read_file_range,
     read_files,
     replace_in_file,
+    rollback_file,
     run_command,
     search_files,
     write_files,
@@ -398,3 +400,85 @@ def test_file_search_truncates_long_result_list(tmp_path):
     lines = result["stdout"].splitlines()
     assert len(lines) == DEFAULT_MAX_SEARCH_RESULTS + 1
     assert f"of {total}" in lines[-1]
+
+
+def test_write_files_snapshots_the_previous_content(tmp_path):
+    (tmp_path / "a.txt").write_text("v1")
+    write_files(tmp_path, "a.txt", "v2")
+    assert (tmp_path / BACKUP_DIR / "a.txt").read_text() == "v1"
+
+
+def test_write_files_takes_no_snapshot_for_a_new_file(tmp_path):
+    write_files(tmp_path, "a.txt", "v1")
+    assert not (tmp_path / BACKUP_DIR).exists()
+
+
+def test_replace_in_file_snapshots_the_previous_content(tmp_path):
+    (tmp_path / "a.txt").write_text("hello world")
+    replace_in_file(tmp_path, "a.txt", "world", "there")
+    assert (tmp_path / BACKUP_DIR / "a.txt").read_text() == "hello world"
+
+
+def test_delete_file_snapshots_before_unlinking(tmp_path):
+    (tmp_path / "a.txt").write_text("v1")
+    delete_file(tmp_path, "a.txt")
+    assert (tmp_path / BACKUP_DIR / "a.txt").read_text() == "v1"
+
+
+def test_rollback_file_restores_overwritten_content(tmp_path):
+    (tmp_path / "a.txt").write_text("v1")
+    write_files(tmp_path, "a.txt", "v2")
+    result = rollback_file(tmp_path, "a.txt")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "a.txt").read_text() == "v1"
+
+
+def test_rollback_file_restores_a_deleted_nested_file(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "a.txt").write_text("v1")
+    delete_file(tmp_path, "sub/a.txt")
+    result = rollback_file(tmp_path, "sub/a.txt")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "sub" / "a.txt").read_text() == "v1"
+
+
+def test_rollback_file_restores_only_the_most_recent_snapshot(tmp_path):
+    (tmp_path / "a.txt").write_text("v1")
+    write_files(tmp_path, "a.txt", "v2")
+    write_files(tmp_path, "a.txt", "v3")
+    rollback_file(tmp_path, "a.txt")
+    assert (tmp_path / "a.txt").read_text() == "v2"
+
+
+def test_rollback_file_without_a_snapshot_fails(tmp_path):
+    (tmp_path / "a.txt").write_text("v1")
+    result = rollback_file(tmp_path, "a.txt")
+    assert result["exit_code"] == 1
+    assert "no snapshot" in result["stderr"].lower()
+
+
+def test_rollback_file_denies_path_traversal(tmp_path):
+    result = rollback_file(tmp_path, "../a.txt")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_list_files_hides_the_backup_directory(tmp_path):
+    (tmp_path / "a.txt").write_text("v1")
+    write_files(tmp_path, "a.txt", "v2")
+    result = list_files(tmp_path)
+    assert result["stdout"].splitlines() == ["a.txt"]
+
+
+def test_file_search_skips_the_backup_directory(tmp_path):
+    (tmp_path / "a.py").write_text("v1")
+    write_files(tmp_path, "a.py", "v2")
+    result = file_search(tmp_path, "*.py")
+    assert result["stdout"].splitlines() == ["a.py"]
+
+
+def test_search_files_skips_the_backup_directory(tmp_path):
+    (tmp_path / "a.txt").write_text("needle")
+    write_files(tmp_path, "a.txt", "haystack")
+    result = search_files(tmp_path, "needle")
+    assert BACKUP_DIR not in result["stdout"]

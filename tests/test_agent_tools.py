@@ -394,3 +394,22 @@ def test_system_prompt_directs_uncovered_work_to_run_command():
 
 def test_system_prompt_discourages_repeat_calls():
     assert "repeat" in agent_tools.SYSTEM_PROMPT
+
+
+def test_tool_schemas_include_rollback_file():
+    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
+    assert "rollback_file" in names
+
+
+def test_execute_tool_rollback_file(tmp_path):
+    (tmp_path / "a.txt").write_text("v1")
+    agent_tools.execute_tool("write_files", {"path": "a.txt", "content": "v2"}, tmp_path)
+    result = agent_tools.execute_tool("rollback_file", {"path": "a.txt"}, tmp_path)
+    assert "Restored" in result
+    assert (tmp_path / "a.txt").read_text() == "v1"
+
+
+def test_execute_tool_rollback_file_without_snapshot(tmp_path):
+    (tmp_path / "a.txt").write_text("v1")
+    result = agent_tools.execute_tool("rollback_file", {"path": "a.txt"}, tmp_path)
+    assert "No snapshot" in result
