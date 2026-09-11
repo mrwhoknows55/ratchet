@@ -6,11 +6,14 @@ from ratchet.shell.executor import (
     DEFAULT_MAX_READ_LINES,
     DEFAULT_MAX_SEARCH_RESULTS,
     MAX_COMMAND_TIMEOUT,
+    _resolve_path,
     append_file,
+    copy_file,
     delete_file,
     file_search,
     get_file_info,
     list_files,
+    move_file,
     read_file_range,
     read_files,
     replace_in_file,
@@ -72,7 +75,7 @@ def test_list_files_returns_sorted_names(tmp_path):
     (tmp_path / "a.txt").write_text("")
     result = list_files(tmp_path)
     assert result["exit_code"] == 0
-    assert result["stdout"] == "a.txt\nb.txt"
+    assert result["stdout"] == "a.txt (0 bytes)\nb.txt (0 bytes)"
     assert result["stderr"] == ""
 
 
@@ -473,7 +476,7 @@ def test_list_files_hides_the_backup_directory(tmp_path):
     (tmp_path / "a.txt").write_text("v1")
     write_files(tmp_path, "a.txt", "v2")
     result = list_files(tmp_path)
-    assert result["stdout"].splitlines() == ["a.txt"]
+    assert result["stdout"].splitlines() == ["a.txt (2 bytes)"]
 
 
 def test_file_search_skips_the_backup_directory(tmp_path):
@@ -570,3 +573,228 @@ def test_run_command_defaults_to_the_default_timeout(tmp_path):
     result = run_command("sleep 2", tmp_path)
     assert result["exit_code"] == 0
     assert DEFAULT_COMMAND_TIMEOUT >= 10
+
+
+def test_resolve_path_rejects_traversal(tmp_path):
+    target, error = _resolve_path(tmp_path, "../a.txt")
+    assert target is None
+    assert "Access Denied" in error["stderr"]
+
+
+def test_resolve_path_allows_the_root_by_default(tmp_path):
+    target, error = _resolve_path(tmp_path, ".", allow_dir=True)
+    assert error is None
+    assert target == tmp_path
+
+
+def test_resolve_path_forbids_the_root_when_asked(tmp_path):
+    target, error = _resolve_path(tmp_path, ".", allow_dir=True, forbid_root=True)
+    assert target is None
+    assert "sandbox root" in error["stderr"]
+
+
+def test_resolve_path_requires_existence_when_asked(tmp_path):
+    target, error = _resolve_path(tmp_path, "nope.txt", must_exist=True)
+    assert target is None
+    assert "not found" in error["stderr"].lower()
+
+
+def test_resolve_path_rejects_a_directory_unless_allowed(tmp_path):
+    (tmp_path / "sub").mkdir()
+    target, error = _resolve_path(tmp_path, "sub")
+    assert target is None
+    assert "directory" in error["stderr"].lower()
+
+
+def test_resolve_path_accepts_a_directory_when_allowed(tmp_path):
+    (tmp_path / "sub").mkdir()
+    target, error = _resolve_path(tmp_path, "sub", allow_dir=True)
+    assert error is None
+    assert target == tmp_path / "sub"
+
+
+def test_copy_file_copies_a_file(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = copy_file(tmp_path, "a.txt", "b.txt")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "b.txt").read_text() == "hello"
+    assert (tmp_path / "a.txt").read_text() == "hello"
+
+
+def test_copy_file_creates_missing_parent_directories(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = copy_file(tmp_path, "a.txt", "sub/nested/b.txt")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "sub" / "nested" / "b.txt").read_text() == "hello"
+
+
+def test_copy_file_copies_a_directory_tree(tmp_path):
+    (tmp_path / "src" / "deep").mkdir(parents=True)
+    (tmp_path / "src" / "deep" / "a.txt").write_text("hello")
+    result = copy_file(tmp_path, "src", "dst")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "dst" / "deep" / "a.txt").read_text() == "hello"
+
+
+def test_copy_file_snapshots_an_overwritten_destination(tmp_path):
+    (tmp_path / "a.txt").write_text("new")
+    (tmp_path / "b.txt").write_text("old")
+    copy_file(tmp_path, "a.txt", "b.txt")
+    assert (tmp_path / BACKUP_DIR / "b.txt").read_text() == "old"
+
+
+def test_copy_file_missing_source(tmp_path):
+    result = copy_file(tmp_path, "nope.txt", "b.txt")
+    assert result["exit_code"] == 1
+    assert "not found" in result["stderr"].lower()
+
+
+def test_copy_file_denies_traversal_in_destination(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = copy_file(tmp_path, "a.txt", "../b.txt")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_copy_file_refuses_the_sandbox_root_as_source(tmp_path):
+    result = copy_file(tmp_path, ".", "dst")
+    assert result["exit_code"] == 1
+    assert "sandbox root" in result["stderr"]
+
+
+def test_copy_file_refuses_to_copy_a_directory_into_itself(tmp_path):
+    (tmp_path / "src").mkdir()
+    result = copy_file(tmp_path, "src", "src/copy")
+    assert result["exit_code"] == 1
+    assert "into itself" in result["stderr"]
+
+
+def test_move_file_renames_a_file(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = move_file(tmp_path, "a.txt", "b.txt")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "b.txt").read_text() == "hello"
+    assert not (tmp_path / "a.txt").exists()
+
+
+def test_move_file_moves_a_directory_tree(tmp_path):
+    (tmp_path / "src" / "deep").mkdir(parents=True)
+    (tmp_path / "src" / "deep" / "a.txt").write_text("hello")
+    result = move_file(tmp_path, "src", "dst")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "dst" / "deep" / "a.txt").read_text() == "hello"
+    assert not (tmp_path / "src").exists()
+
+
+def test_move_file_snapshots_the_source_so_it_can_be_rolled_back(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    move_file(tmp_path, "a.txt", "b.txt")
+    result = rollback_file(tmp_path, "a.txt")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "a.txt").read_text() == "hello"
+
+
+def test_move_file_missing_source(tmp_path):
+    result = move_file(tmp_path, "nope.txt", "b.txt")
+    assert result["exit_code"] == 1
+    assert "not found" in result["stderr"].lower()
+
+
+def test_move_file_refuses_the_sandbox_root_as_source(tmp_path):
+    result = move_file(tmp_path, ".", "dst")
+    assert result["exit_code"] == 1
+    assert "sandbox root" in result["stderr"]
+
+
+def test_move_file_denies_traversal_in_destination(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = move_file(tmp_path, "a.txt", "/etc/b.txt")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_delete_file_refuses_a_directory_without_recursive(tmp_path):
+    (tmp_path / "sub").mkdir()
+    result = delete_file(tmp_path, "sub")
+    assert result["exit_code"] == 1
+    assert "recursive" in result["stderr"]
+    assert (tmp_path / "sub").is_dir()
+
+
+def test_delete_file_removes_a_directory_with_recursive(tmp_path):
+    (tmp_path / "sub" / "deep").mkdir(parents=True)
+    (tmp_path / "sub" / "deep" / "a.txt").write_text("hello")
+    result = delete_file(tmp_path, "sub", recursive=True)
+    assert result["exit_code"] == 0
+    assert not (tmp_path / "sub").exists()
+
+
+def test_delete_file_snapshots_files_inside_a_deleted_directory(tmp_path):
+    (tmp_path / "sub" / "deep").mkdir(parents=True)
+    (tmp_path / "sub" / "deep" / "a.txt").write_text("hello")
+    delete_file(tmp_path, "sub", recursive=True)
+    result = rollback_file(tmp_path, "sub/deep/a.txt")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "sub" / "deep" / "a.txt").read_text() == "hello"
+
+
+def test_delete_file_refuses_the_sandbox_root(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = delete_file(tmp_path, ".", recursive=True)
+    assert result["exit_code"] == 1
+    assert "sandbox root" in result["stderr"]
+    assert (tmp_path / "a.txt").exists()
+
+
+def test_list_files_scopes_to_path_argument(tmp_path):
+    (tmp_path / "a.txt").write_text("")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.txt").write_text("")
+    result = list_files(tmp_path, "sub")
+    assert "c.txt" in result["stdout"]
+    assert "a.txt" not in result["stdout"]
+
+
+def test_list_files_marks_directories(tmp_path):
+    (tmp_path / "sub").mkdir()
+    result = list_files(tmp_path)
+    assert "sub/" in result["stdout"]
+
+
+def test_list_files_reports_file_sizes(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = list_files(tmp_path)
+    assert "5" in result["stdout"]
+
+
+def test_list_files_missing_directory(tmp_path):
+    result = list_files(tmp_path, "nope")
+    assert result["exit_code"] == 1
+    assert "not found" in result["stderr"].lower()
+
+
+def test_list_files_denies_traversal(tmp_path):
+    result = list_files(tmp_path, "../..")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]
+
+
+def test_search_files_scopes_to_path_argument(tmp_path):
+    (tmp_path / "a.txt").write_text("needle")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.txt").write_text("needle")
+    result = search_files(tmp_path, "needle", "sub")
+    assert "c.txt" in result["stdout"]
+    assert "a.txt" not in result["stdout"]
+
+
+def test_search_files_missing_directory(tmp_path):
+    result = search_files(tmp_path, "needle", "nope")
+    assert result["exit_code"] == 1
+    assert "not found" in result["stderr"].lower()
+
+
+def test_search_files_denies_traversal(tmp_path):
+    result = search_files(tmp_path, "needle", "../..")
+    assert result["exit_code"] == 1
+    assert "Access Denied" in result["stderr"]

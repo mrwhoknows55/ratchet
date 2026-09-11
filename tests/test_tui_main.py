@@ -328,7 +328,7 @@ async def test_tool_call_shows_running_and_result_in_display(tmp_path, monkeypat
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
         assert any("tool: list_files running..." in line for line in lines)
-        assert any("tool: list_files -> a.txt" in line for line in lines)
+        assert any("tool: list_files -> a.txt (0 bytes)" in line for line in lines)
 
 
 async def test_tool_call_logged_to_log_file(tmp_path, monkeypatch):
@@ -368,7 +368,7 @@ async def test_tool_call_logged_to_log_file(tmp_path, monkeypatch):
         re.MULTILINE,
     )
     assert re.search(
-        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} tool: list_files -> a\.txt$",
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} tool: list_files -> a\.txt \(0 bytes\)$",
         content,
         re.MULTILINE,
     )

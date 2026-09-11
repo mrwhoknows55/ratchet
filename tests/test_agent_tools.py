@@ -18,7 +18,7 @@ def test_tool_schemas_include_new_tools():
 def test_execute_tool_list_files(tmp_path):
     (tmp_path / "a.txt").write_text("")
     result = agent_tools.execute_tool("list_files", {}, tmp_path)
-    assert result == "a.txt"
+    assert result == "a.txt (0 bytes)"
 
 
 def test_execute_tool_list_files_empty_directory(tmp_path):
@@ -110,7 +110,7 @@ def test_run_agent_turn_executes_tool_call_and_returns_final_reply(tmp_path):
     tool_message = calls[1][-1]
     assert tool_message["role"] == "tool"
     assert tool_message["tool_call_id"] == "call_1"
-    assert tool_message["content"] == "a.txt"
+    assert tool_message["content"] == "a.txt (0 bytes)"
 
 
 def test_run_agent_turn_calls_on_tool_call_before_and_after_execution(tmp_path):
@@ -141,7 +141,7 @@ def test_run_agent_turn_calls_on_tool_call_before_and_after_execution(tmp_path):
 
     assert notifications == [
         "tool: list_files running...",
-        "tool: list_files -> a.txt",
+        "tool: list_files -> a.txt (0 bytes)",
     ]
 
 
@@ -465,3 +465,89 @@ def test_system_prompt_routes_shell_operators_to_a_script():
 def test_system_prompt_names_the_available_tooling():
     for binary in ("openpyxl", "yt-dlp", "ffmpeg"):
         assert binary in agent_tools.SYSTEM_PROMPT
+
+
+def test_tool_schemas_include_the_remaining_tools():
+    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
+    assert "copy_file" in names
+    assert "move_file" in names
+    assert "search_web" in names
+    assert "fetch_url" in names
+
+
+def test_execute_tool_copy_file(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = agent_tools.execute_tool(
+        "copy_file", {"source": "a.txt", "destination": "b.txt"}, tmp_path
+    )
+    assert "copied" in result.lower()
+    assert (tmp_path / "b.txt").read_text() == "hello"
+
+
+def test_execute_tool_move_file(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = agent_tools.execute_tool(
+        "move_file", {"source": "a.txt", "destination": "b.txt"}, tmp_path
+    )
+    assert "moved" in result.lower()
+    assert not (tmp_path / "a.txt").exists()
+
+
+def test_execute_tool_delete_file_passes_recursive(tmp_path):
+    (tmp_path / "sub").mkdir()
+    result = agent_tools.execute_tool(
+        "delete_file", {"path": "sub", "recursive": True}, tmp_path
+    )
+    assert "deleted" in result.lower()
+    assert not (tmp_path / "sub").exists()
+
+
+def test_execute_tool_list_files_scopes_to_path(tmp_path):
+    (tmp_path / "a.txt").write_text("")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.txt").write_text("")
+    result = agent_tools.execute_tool("list_files", {"path": "sub"}, tmp_path)
+    assert "c.txt" in result
+    assert "a.txt" not in result
+
+
+def test_execute_tool_search_files_scopes_to_path(tmp_path):
+    (tmp_path / "a.txt").write_text("needle")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.txt").write_text("needle")
+    result = agent_tools.execute_tool(
+        "search_files", {"pattern": "needle", "path": "sub"}, tmp_path
+    )
+    assert "c.txt" in result
+    assert "a.txt" not in result
+
+
+def test_execute_tool_search_web_delegates_to_the_web_module(tmp_path, monkeypatch):
+    calls = {}
+
+    def fake_search_web(query, max_results=5):
+        calls["query"] = query
+        calls["max_results"] = max_results
+        return {"stdout": "1. Result", "stderr": "", "exit_code": 0}
+
+    monkeypatch.setattr(agent_tools, "search_web", fake_search_web)
+    result = agent_tools.execute_tool(
+        "search_web", {"query": "python asyncio", "max_results": 3}, tmp_path
+    )
+
+    assert calls == {"query": "python asyncio", "max_results": 3}
+    assert result == "1. Result"
+
+
+def test_execute_tool_fetch_url_delegates_to_the_web_module(tmp_path, monkeypatch):
+    calls = {}
+
+    def fake_fetch_url(url):
+        calls["url"] = url
+        return {"stdout": "# Page", "stderr": "", "exit_code": 0}
+
+    monkeypatch.setattr(agent_tools, "fetch_url", fake_fetch_url)
+    result = agent_tools.execute_tool("fetch_url", {"url": "https://a.test"}, tmp_path)
+
+    assert calls == {"url": "https://a.test"}
+    assert result == "# Page"

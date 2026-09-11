@@ -12,10 +12,32 @@ DEFAULT_MAX_READ_LINES = 200
 DEFAULT_MAX_SEARCH_RESULTS = 100
 
 
-def _resolve_path(root: Path, relative: str) -> Path | None:
+def _resolve_path(
+    root: Path,
+    relative: str,
+    *,
+    must_exist: bool = False,
+    allow_dir: bool = False,
+    forbid_root: bool = False,
+) -> tuple[Path | None, dict[str, str | int] | None]:
     if relative.startswith("/") or ".." in Path(relative).parts:
-        return None
-    return root / relative
+        return None, _access_denied(relative)
+    target = root / relative
+    if forbid_root and target.resolve() == root.resolve():
+        return None, {
+            "stdout": "",
+            "stderr": f"Error: '{relative}' is the sandbox root; refusing to operate on it.",
+            "exit_code": 1,
+        }
+    if must_exist and not target.exists():
+        return None, {"stdout": "", "stderr": f"File not found: '{relative}'", "exit_code": 1}
+    if not allow_dir and target.is_dir():
+        return None, {
+            "stdout": "",
+            "stderr": f"Error: '{relative}' is a directory, not a file.",
+            "exit_code": 1,
+        }
+    return target, None
 
 
 def _number_lines(lines: list[str], start: int) -> str:
@@ -24,9 +46,9 @@ def _number_lines(lines: list[str], start: int) -> str:
 
 
 def _read_lines(root: Path, path: str) -> tuple[list[str] | None, dict[str, str | int] | None]:
-    target = _resolve_path(root, path)
-    if target is None:
-        return None, _access_denied(path)
+    target, error = _resolve_path(root, path)
+    if error is not None:
+        return None, error
     if not target.is_file():
         return None, {"stdout": "", "stderr": f"File not found: '{path}'", "exit_code": 1}
     try:
@@ -58,6 +80,16 @@ def restore_backup(root: Path, target: Path) -> bool:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(snapshot, target)
     return True
+
+
+def _backup_tree(root: Path, directory: Path) -> None:
+    for entry in directory.rglob("*"):
+        if entry.is_file() and BACKUP_DIR not in entry.relative_to(root).parts:
+            backup_file(root, entry)
+
+
+def _is_inside(parent: Path, candidate: Path) -> bool:
+    return candidate == parent or parent in candidate.parents
 
 
 def _access_denied(path: str) -> dict[str, str | int]:
@@ -107,10 +139,24 @@ def run_command(command: str, root: Path, timeout: int | None = None) -> dict[st
         return {"stdout": "", "stderr": f"Execution error: {e}", "exit_code": 1}
 
 
-def list_files(root: Path) -> dict[str, str | int]:
+def list_files(root: Path, path: str = ".") -> dict[str, str | int]:
     root.mkdir(parents=True, exist_ok=True)
-    names = sorted(entry.name for entry in root.iterdir() if entry.name != BACKUP_DIR)
-    return {"stdout": "\n".join(names), "stderr": "", "exit_code": 0}
+    target, error = _resolve_path(root, path, allow_dir=True)
+    if error is not None:
+        return error
+    if not target.is_dir():
+        return {"stdout": "", "stderr": f"Directory not found: '{path}'", "exit_code": 1}
+
+    at_root = target.resolve() == root.resolve()
+    entries = []
+    for entry in sorted(target.iterdir(), key=lambda item: item.name):
+        if at_root and entry.name == BACKUP_DIR:
+            continue
+        if entry.is_dir():
+            entries.append(f"{entry.name}/")
+        else:
+            entries.append(f"{entry.name} ({entry.stat().st_size} bytes)")
+    return {"stdout": "\n".join(entries), "stderr": "", "exit_code": 0}
 
 
 def read_files(root: Path, path: str) -> dict[str, str | int]:
@@ -163,9 +209,9 @@ def read_file_range(
 def replace_in_file(root: Path, path: str, old_str: str, new_str: str) -> dict[str, str | int]:
     if not old_str:
         return {"stdout": "", "stderr": "Error: 'old_str' must not be empty.", "exit_code": 1}
-    target = _resolve_path(root, path)
-    if target is None:
-        return _access_denied(path)
+    target, error = _resolve_path(root, path)
+    if error is not None:
+        return error
     if not target.is_file():
         return {"stdout": "", "stderr": f"File not found: '{path}'", "exit_code": 1}
     try:
@@ -198,9 +244,9 @@ def replace_in_file(root: Path, path: str, old_str: str, new_str: str) -> dict[s
 
 
 def write_files(root: Path, path: str, content: str) -> dict[str, str | int]:
-    target = _resolve_path(root, path)
-    if target is None:
-        return _access_denied(path)
+    target, error = _resolve_path(root, path)
+    if error is not None:
+        return error
     backup_file(root, target)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content)
@@ -208,9 +254,9 @@ def write_files(root: Path, path: str, content: str) -> dict[str, str | int]:
 
 
 def append_file(root: Path, path: str, content: str) -> dict[str, str | int]:
-    target = _resolve_path(root, path)
-    if target is None:
-        return _access_denied(path)
+    target, error = _resolve_path(root, path)
+    if error is not None:
+        return error
     backup_file(root, target)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a") as handle:
@@ -222,10 +268,23 @@ def append_file(root: Path, path: str, content: str) -> dict[str, str | int]:
     }
 
 
-def delete_file(root: Path, path: str) -> dict[str, str | int]:
-    target = _resolve_path(root, path)
-    if target is None:
-        return _access_denied(path)
+def delete_file(root: Path, path: str, recursive: bool = False) -> dict[str, str | int]:
+    target, error = _resolve_path(root, path, allow_dir=True, forbid_root=True)
+    if error is not None:
+        return error
+    if target.is_dir():
+        if not recursive:
+            return {
+                "stdout": "",
+                "stderr": (
+                    f"Error: '{path}' is a directory. "
+                    "Pass recursive=true to delete it and everything inside it."
+                ),
+                "exit_code": 1,
+            }
+        _backup_tree(root, target)
+        shutil.rmtree(target)
+        return {"stdout": f"Deleted directory '{path}'", "stderr": "", "exit_code": 0}
     if not target.is_file():
         return {"stdout": "", "stderr": f"File not found: '{path}'", "exit_code": 1}
     backup_file(root, target)
@@ -233,10 +292,70 @@ def delete_file(root: Path, path: str) -> dict[str, str | int]:
     return {"stdout": f"Deleted '{path}'", "stderr": "", "exit_code": 0}
 
 
+def copy_file(root: Path, source: str, destination: str) -> dict[str, str | int]:
+    src, error = _resolve_path(root, source, must_exist=True, allow_dir=True, forbid_root=True)
+    if error is not None:
+        return error
+    dst, error = _resolve_path(root, destination, allow_dir=True, forbid_root=True)
+    if error is not None:
+        return error
+
+    if src.is_dir():
+        if _is_inside(src, dst):
+            return {
+                "stdout": "",
+                "stderr": f"Error: cannot copy '{source}' into itself.",
+                "exit_code": 1,
+            }
+        if dst.exists():
+            _backup_tree(root, dst)
+            shutil.rmtree(dst)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dst)
+        return {
+            "stdout": f"Copied directory '{source}' to '{destination}'",
+            "stderr": "",
+            "exit_code": 0,
+        }
+
+    backup_file(root, dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    return {"stdout": f"Copied '{source}' to '{destination}'", "stderr": "", "exit_code": 0}
+
+
+def move_file(root: Path, source: str, destination: str) -> dict[str, str | int]:
+    src, error = _resolve_path(root, source, must_exist=True, allow_dir=True, forbid_root=True)
+    if error is not None:
+        return error
+    dst, error = _resolve_path(root, destination, allow_dir=True, forbid_root=True)
+    if error is not None:
+        return error
+
+    if src.is_dir():
+        if _is_inside(src, dst):
+            return {
+                "stdout": "",
+                "stderr": f"Error: cannot move '{source}' into itself.",
+                "exit_code": 1,
+            }
+        _backup_tree(root, src)
+        if dst.exists():
+            _backup_tree(root, dst)
+            shutil.rmtree(dst)
+    else:
+        backup_file(root, src)
+        backup_file(root, dst)
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    return {"stdout": f"Moved '{source}' to '{destination}'", "stderr": "", "exit_code": 0}
+
+
 def get_file_info(root: Path, path: str) -> dict[str, str | int]:
-    target = _resolve_path(root, path)
-    if target is None:
-        return _access_denied(path)
+    target, error = _resolve_path(root, path)
+    if error is not None:
+        return error
     if not target.is_file():
         return {"stdout": "", "stderr": f"File not found: '{path}'", "exit_code": 1}
 
@@ -258,12 +377,17 @@ def get_file_info(root: Path, path: str) -> dict[str, str | int]:
     return {"stdout": report, "stderr": "", "exit_code": 0}
 
 
-def search_files(root: Path, pattern: str) -> dict[str, str | int]:
+def search_files(root: Path, pattern: str, path: str = ".") -> dict[str, str | int]:
     root.mkdir(parents=True, exist_ok=True)
+    target, error = _resolve_path(root, path, allow_dir=True)
+    if error is not None:
+        return error
+    if not target.is_dir():
+        return {"stdout": "", "stderr": f"Directory not found: '{path}'", "exit_code": 1}
     if shutil.which("rg"):
-        args = ["rg", "-n", "--glob", f"!{BACKUP_DIR}", pattern, "."]
+        args = ["rg", "-n", "--glob", f"!{BACKUP_DIR}", pattern, path]
     else:
-        args = ["grep", "-rn", f"--exclude-dir={BACKUP_DIR}", pattern, "."]
+        args = ["grep", "-rn", f"--exclude-dir={BACKUP_DIR}", pattern, path]
     try:
         result = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=10)
         return {"stdout": result.stdout, "stderr": result.stderr, "exit_code": result.returncode}
@@ -284,9 +408,9 @@ def file_search(root: Path, pattern: str, path: str = ".") -> dict[str, str | in
             "exit_code": 1,
         }
 
-    target = _resolve_path(root, path)
-    if target is None:
-        return _access_denied(path)
+    target, error = _resolve_path(root, path, allow_dir=True)
+    if error is not None:
+        return error
     if not target.is_dir():
         return {"stdout": "", "stderr": f"Directory not found: '{path}'", "exit_code": 1}
 
@@ -307,9 +431,9 @@ def file_search(root: Path, pattern: str, path: str = ".") -> dict[str, str | in
 
 
 def rollback_file(root: Path, path: str) -> dict[str, str | int]:
-    target = _resolve_path(root, path)
-    if target is None:
-        return _access_denied(path)
+    target, error = _resolve_path(root, path)
+    if error is not None:
+        return error
     if not restore_backup(root, target):
         return {
             "stdout": "",

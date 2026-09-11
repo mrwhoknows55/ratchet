@@ -10,7 +10,8 @@ AI harness written in Python for local models via LM Studio.
 - Offline/error handling when the local server is unreachable or returns an error
 - Messages logged to file with timestamps, prefixed by `user:` / `assistant:` role
 - Sandboxed shell mode (`uv run ratchet shell`) for running commands scoped to a `./sandbox` directory
-- Tool calling in chat mode: the model can call a `list_files` tool to read the sandbox directory; tool execution always runs locally, regardless of which model backend answers
+- Tool calling in chat mode: 16 tools covering reads, writes, edits, search, file management, snapshots/rollback, shell commands and the web; tool execution always runs locally, regardless of which model backend answers
+- Web tools (`search_web`, `fetch_url`) via the Tavily REST API — set `TAVILY_API_KEY` to enable them; everything else works without it
 
 See [`docs/model-comparison.md`](docs/model-comparison.md) for comparing the
 local model against online models, and

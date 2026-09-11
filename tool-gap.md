@@ -24,24 +24,23 @@ Compared: `src/ratchet/agent/tools.py` (`TOOL_SCHEMAS`, 12 tools) against
 - **`append_file`** — appends without a rewrite, creates the file and parents when absent, snapshots first.
 - **`run_command` timeout** — per-call `timeout` arg, default `agent.command_timeout`, capped at 600s.
 - **`get_file_info`** — size, line count, mtime and sha256; `lines: -1` for binary. Absorbs `file_checksum`, which is no longer worth shipping separately.
+- **Directory-aware path validation** — `_resolve_path` takes `must_exist` / `allow_dir` / `forbid_root` and returns `(path, error)`, so every caller gets a specific message instead of one generic denial. `forbid_root` is what keeps `delete_file(".")` from wiping the sandbox.
+- **`copy_file`** — file or whole tree (`shutil.copytree`), creates missing parents, refuses to copy a directory into itself.
+- **`move_file`** — move/rename file or directory, snapshots the source first so `rollback_file` can bring it back.
+- **`delete_file` recursive** — directories need `recursive=true`; every file inside is snapshotted before the tree goes, so a recursive delete is no longer irreversible.
+- **`list_files` path + metadata** — takes a `path`, marks directories with a trailing `/` and reports a byte size per file.
+- **`search_files` path** — takes a `path` to scope the rg/grep run to a subdirectory.
+- **`search_web`** — Tavily `/search` over plain `httpx`, returns ranked title/URL/snippet blocks.
+- **`fetch_url`** — Tavily `/extract` with `format: "markdown"`, truncated at `MAX_CONTENT_CHARS`.
 
-## Missing from ratchet (4)
+## Missing from ratchet (0)
 
-1. **`copy_file`** — copy file or directory tree (`shutil.copytree` for dirs).
-2. **`move_file`** — move/rename file or directory.
-3. **`search_web`** — live web search (hydraharness uses Tavily).
-4. **`fetch_url`** — fetch a URL as Markdown (Tavily Extract).
-
-Also missing on tools that do exist: `delete_file` has no `recursive` for directories, `list_files` takes no path arg and returns no per-entry metadata, and `search_files` has no `path` scope arg.
-
-## Missing infrastructure
-
-- **Directory-aware path validation** — hydraharness's `validate_sandbox_path` has `must_exist` / `allow_dir` / `forbid_root` flags; ratchet's `_resolve_path` (`shell/executor.py:11`) is file-oriented and has no guard against operating on the sandbox root itself. Needed before `copy_file`, `move_file`, or a recursive `delete_file`.
+Nothing from the hydraharness list is outstanding. 16 tools ship.
 
 ## Notes
 
-- The two Tavily tools (`search_web`, `fetch_url`) are network tools and add an API-key dependency; they are a different category from the rest of the list.
-- Directories are not covered by the file-level snapshot layer, so a recursive delete would be genuinely irreversible.
+- The two Tavily tools (`search_web`, `fetch_url`) live in `src/ratchet/agent/web.py`, not `shell/executor.py`: they are the only tools that leave the sandbox. They read `TAVILY_API_KEY` from the environment and return a plain error when it is unset, so the harness still runs without a key.
+- No Tavily SDK: the API is two POSTs, and `httpx` is already a dependency. Tests drive it with `httpx.MockTransport` through the module-level `_transport`, the same pattern `agent/client.py` uses.
 
 ---
 

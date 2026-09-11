@@ -3,14 +3,22 @@ from pathlib import Path
 from typing import Callable
 
 from ratchet.agent.config import load_config
+from ratchet.agent.web import (
+    DEFAULT_MAX_RESULTS,
+    MAX_RESULTS_LIMIT,
+    fetch_url,
+    search_web,
+)
 from ratchet.shell.executor import (
     DEFAULT_COMMAND_TIMEOUT,
     MAX_COMMAND_TIMEOUT,
     append_file,
+    copy_file,
     delete_file,
     file_search,
     get_file_info,
     list_files,
+    move_file,
     read_file_range,
     read_files,
     replace_in_file,
@@ -32,12 +40,12 @@ SYSTEM_PROMPT = (
     "Do not repeat a call with the same arguments - reuse what it told you. "
     "Prefer the narrowest tool, and edit files in place rather than "
     "rewriting them. "
-    "Use run_command for what the file tools do not cover, such as reading "
-    "an archive's listing before unpacking it. It takes no pipes, redirects "
-    "or globs: for those, or for multi-step work, write a script with "
-    "write_files and run it. python (with openpyxl), yt-dlp and ffmpeg are "
-    "on PATH; downloads and encoding are slow, so raise timeout rather than "
-    "retrying. "
+    "Use run_command for what the file tools do not cover. It takes no pipes, "
+    "redirects or globs: for those, or for multi-step work, write a script and "
+    "run it. python (with openpyxl), yt-dlp and ffmpeg are on PATH; raise "
+    "timeout for slow downloads rather than retrying. "
+    "search_web and fetch_url reach the internet and need TAVILY_API_KEY; "
+    "search, then fetch only the URL worth reading. "
     "File contents are line-numbered as 'N| '; the prefix is not file content. "
     "If a call fails, read the error and adjust instead of retrying it. "
     "Match the request exactly - the named path, the exact text, a trailing "
@@ -53,8 +61,20 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "List files in the sandboxed working directory.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
+            "description": (
+                "List a directory in the sandbox, with a size for each file and a "
+                "trailing '/' on each subdirectory."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to list. Defaults to the sandbox root.",
+                    }
+                },
+                "required": [],
+            },
         },
     },
     {
@@ -65,7 +85,11 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Pattern to search for."}
+                    "pattern": {"type": "string", "description": "Pattern to search for."},
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search under. Defaults to the sandbox root.",
+                    },
                 },
                 "required": ["pattern"],
             },
@@ -172,8 +196,21 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "delete_file",
-            "description": "Delete a file in the sandboxed working directory.",
-            "parameters": {"type": "object", "properties": _PATH_PROPERTY, "required": ["path"]},
+            "description": (
+                "Delete a file, or a directory when recursive is true. Contents are "
+                "snapshotted first, so rollback_file can bring a deleted file back."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    **_PATH_PROPERTY,
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "Required to delete a directory and everything inside it.",
+                    },
+                },
+                "required": ["path"],
+            },
         },
     },
     {
@@ -214,6 +251,83 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "copy_file",
+            "description": (
+                "Copy a file, or a whole directory tree, to another path in the sandbox. "
+                "Missing parent directories are created."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "description": "Path to copy from."},
+                    "destination": {"type": "string", "description": "Path to copy to."},
+                },
+                "required": ["source", "destination"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "move_file",
+            "description": (
+                "Move or rename a file or directory within the sandbox. Missing parent "
+                "directories are created."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "description": "Path to move from."},
+                    "destination": {"type": "string", "description": "Path to move to."},
+                },
+                "required": ["source", "destination"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": (
+                "Search the live web and return ranked titles, URLs and snippets. "
+                "Use fetch_url to read a result in full."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for."},
+                    "max_results": {
+                        "type": "integer",
+                        "description": (
+                            f"How many results to return. Defaults to {DEFAULT_MAX_RESULTS}, "
+                            f"capped at {MAX_RESULTS_LIMIT}."
+                        ),
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_url",
+            "description": "Fetch one web page and return its content as Markdown.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Absolute http:// or https:// URL.",
+                    }
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_command",
             "description": (
                 "Run one command in the sandbox. No pipes, redirects or globs - "
@@ -243,9 +357,11 @@ TOOL_SCHEMAS = [
 
 def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
     if name == "list_files":
-        result = list_files(sandbox_root)
+        result = list_files(sandbox_root, arguments.get("path", "."))
     elif name == "search_files":
-        result = search_files(sandbox_root, arguments["pattern"])
+        result = search_files(
+            sandbox_root, arguments["pattern"], arguments.get("path", ".")
+        )
     elif name == "get_file_info":
         result = get_file_info(sandbox_root, arguments["path"])
     elif name == "read_files":
@@ -266,7 +382,19 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
     elif name == "append_file":
         result = append_file(sandbox_root, arguments["path"], arguments["content"])
     elif name == "delete_file":
-        result = delete_file(sandbox_root, arguments["path"])
+        result = delete_file(
+            sandbox_root, arguments["path"], arguments.get("recursive", False)
+        )
+    elif name == "copy_file":
+        result = copy_file(sandbox_root, arguments["source"], arguments["destination"])
+    elif name == "move_file":
+        result = move_file(sandbox_root, arguments["source"], arguments["destination"])
+    elif name == "search_web":
+        result = search_web(
+            arguments["query"], arguments.get("max_results", DEFAULT_MAX_RESULTS)
+        )
+    elif name == "fetch_url":
+        result = fetch_url(arguments["url"])
     elif name == "file_search":
         result = file_search(sandbox_root, arguments["pattern"], arguments.get("path", "."))
     elif name == "rollback_file":
