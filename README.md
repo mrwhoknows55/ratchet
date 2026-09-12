@@ -25,7 +25,7 @@ commands checklist.
 
 - [working] Create a file called `hello.txt` in the current directory. Write "Hello, world!" to it. Make sure it ends in a newline. Don't make any other files or folders.
 - [working] Extract the contents of the solution from `archive.tar` and write it to `app/solution.txt`.
-- [wip] Instructions:
+- [working] Instructions:
   1. Create a new spreadsheet named "Financial Report"
   2. Create a sheet in this spreadsheet named "Q1 Data"
   3. Add the following data to the sheet, starting at cell A1:
