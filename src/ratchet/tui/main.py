@@ -1,22 +1,121 @@
 import asyncio
+import time
 from datetime import datetime
 from pathlib import Path
 
+from rich.markup import escape
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, OptionList, RichLog, TextArea
+from textual.widgets import Footer, Header, OptionList, RichLog, Static, TextArea
 from textual.widgets.option_list import Option
 
 from ratchet.agent.client import call_llm
 from ratchet.agent.config import load_config
 from ratchet.agent.models import load_supported_models
-from ratchet.agent.tools import run_agent_turn
+from ratchet.agent.tools import TurnEvent, run_agent_turn
 from ratchet.shell.executor import run_command
 
 DEFAULT_LOG_PATH = Path("log/ratchet.log")
+SUMMARY_WIDTH = 100
+ARGS_WIDTH = 80
+NAME_WIDTH = 14
+ARG_KEYS = ("command", "query", "url", "path", "pattern")
+
+
+def summarize_output(output: str) -> str:
+    text = output.strip()
+    if not text:
+        return "(no output)"
+    lines = text.splitlines()
+    if len(lines) > 1:
+        return f"{len(lines)} lines"
+    if len(text) > SUMMARY_WIDTH:
+        return text[: SUMMARY_WIDTH - 1] + "\u2026"
+    return text
+
+
+def _truncate(text: str, width: int) -> str:
+    return text if len(text) <= width else text[: width - 1] + "\u2026"
+
+
+def format_tool_args(name: str, arguments: dict) -> str:
+    source = arguments.get("source")
+    destination = arguments.get("destination")
+    if source and destination:
+        return _truncate(f"{source} \u2192 {destination}", ARGS_WIDTH)
+    for key in ARG_KEYS:
+        value = arguments.get(key)
+        if value:
+            return _truncate(str(value), ARGS_WIDTH)
+    return ""
+
+
+def format_call_line(event: TurnEvent) -> str:
+    args = escape(format_tool_args(event.name, event.arguments))
+    name = escape(event.name)
+    body = f"{name:<{NAME_WIDTH}} {args}".rstrip() if args else name
+    return f"  [dim]{event.index}[/dim] [dim]\u25b8[/dim] {body}"
+
+
+def format_tool_line(event: TurnEvent) -> str:
+    summary = escape(summarize_output(event.output))
+    if event.exit_code != 0:
+        return f"      [red]\u2717 {event.elapsed:.1f}s \u00b7 {summary}[/red]"
+    return f"      [green]\u2713[/green] [dim]{event.elapsed:.1f}s \u00b7[/dim] {summary}"
+
+
+def format_reply_line(reply: str) -> str:
+    return f"[dim]\u25c6[/dim] {escape(reply)}"
+
+
+def format_error_line(reply: str) -> str:
+    return f"[red]! {escape(reply)}[/red]"
+
+
+def format_log_line(event: TurnEvent) -> str:
+    return f"tool: {event.name} -> {event.output}"
+
+
+def format_call_log_line(event: TurnEvent) -> str:
+    args = format_tool_args(event.name, event.arguments)
+    return f"tool: {event.name}({args})"
+
+
+class StatusBar(Static):
+    FRAMES = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__("", **kwargs)
+        self._frame = 0
+        self._started = 0.0
+        self._timer = None
+
+    def on_mount(self) -> None:
+        self.display = False
+        self._timer = self.set_interval(0.1, self.advance, pause=True)
+
+    def start(self) -> None:
+        self._started = time.monotonic()
+        self._frame = 0
+        self.display = True
+        self.update(self.render_text())
+        if self._timer:
+            self._timer.resume()
+
+    def advance(self) -> None:
+        self._frame = (self._frame + 1) % len(self.FRAMES)
+        self.update(self.render_text())
+
+    def stop(self) -> None:
+        if self._timer:
+            self._timer.pause()
+        self.display = False
+
+    def render_text(self) -> str:
+        return f"{self.FRAMES[self._frame]} {time.monotonic() - self._started:.1f}s"
 
 
 class PromptInput(TextArea):
@@ -70,6 +169,12 @@ class RatchetApp(App):
         height: 1fr;
     }
 
+    #status {
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
     #message_input {
         height: auto;
         max-height: 12;
@@ -96,7 +201,8 @@ class RatchetApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield RichLog(id="messages")
+        yield RichLog(id="messages", markup=True)
+        yield StatusBar(id="status")
         yield PromptInput(id="message_input")
         yield Footer()
 
@@ -106,7 +212,7 @@ class RatchetApp(App):
         if self.mode != "shell":
             model_name = load_config().get("model", {}).get("name", "unknown")
             message = f"model: {model_name}"
-            self.query_one("#messages", RichLog).write(message)
+            self.query_one("#messages", RichLog).write(f"[dim]{escape(message)}[/dim]")
             self._write_log(message)
         self.query_one("#message_input", PromptInput).focus()
 
@@ -117,35 +223,49 @@ class RatchetApp(App):
         text = event.text
         if not text.strip():
             return
-        message = f"user: {text}"
-        self.query_one("#messages", RichLog).write(message)
-        self._write_log(message)
+        self.query_one("#messages", RichLog).write(f"[bold]\u203a {escape(text)}[/bold]")
+        self._write_log(f"user: {text}")
         event.prompt_input.text = ""
         self._request_reply(text)
 
     @work
     async def _request_reply(self, text: str) -> None:
-        if self.mode == "shell":
-            result = await asyncio.to_thread(run_command, text, self.sandbox_root)
-            output = (result["stdout"] + result["stderr"]).strip() or "(no output)"
-            message = f"shell: {output} [exit {result['exit_code']}]"
-        else:
-            override_config = {"model": self.selected_model} if self.selected_model else None
-            reply = await asyncio.to_thread(
-                run_agent_turn,
-                call_llm,
-                text,
-                self.sandbox_root,
-                override_config,
-                lambda msg: self.call_from_thread(self._on_tool_call, msg),
-            )
-            message = f"assistant: {reply}"
-        self.query_one("#messages", RichLog).write(message)
-        self._write_log(message)
+        status = self.query_one("#status", StatusBar)
+        status.start()
+        try:
+            if self.mode == "shell":
+                result = await asyncio.to_thread(run_command, text, self.sandbox_root)
+                output = (result["stdout"] + result["stderr"]).strip() or "(no output)"
+                reply = f"{output} [exit {result['exit_code']}]"
+                log_message = f"shell: {reply}"
+            else:
+                override_config = {"model": self.selected_model} if self.selected_model else None
+                reply = await asyncio.to_thread(
+                    run_agent_turn,
+                    call_llm,
+                    text,
+                    self.sandbox_root,
+                    override_config,
+                    lambda event: self.call_from_thread(self._on_turn_event, event),
+                )
+                log_message = f"assistant: {reply}"
+        finally:
+            status.stop()
 
-    def _on_tool_call(self, message: str) -> None:
-        self.query_one("#messages", RichLog).write(message)
-        self._write_log(message)
+        line = format_error_line(reply) if reply.startswith("[") else format_reply_line(reply)
+        self.query_one("#messages", RichLog).write(line)
+        self._write_log(log_message)
+
+    def _on_turn_event(self, event: TurnEvent) -> None:
+        if event.phase == "thinking":
+            return
+        messages = self.query_one("#messages", RichLog)
+        if event.phase == "tool_start":
+            messages.write(format_call_line(event))
+            self._write_log(format_call_log_line(event))
+            return
+        messages.write(format_tool_line(event))
+        self._write_log(format_log_line(event))
 
     def _write_log(self, message: str) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -168,7 +288,7 @@ class RatchetApp(App):
             return
         self.selected_model = models[alias]
         message = f"model set to {self.selected_model['name']}"
-        self.query_one("#messages", RichLog).write(message)
+        self.query_one("#messages", RichLog).write(escape(message))
         self._write_log(message)
 
 

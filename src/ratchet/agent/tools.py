@@ -1,4 +1,6 @@
 import json
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -29,6 +31,18 @@ from ratchet.shell.executor import (
 )
 
 DEFAULT_MAX_STEPS = 12
+
+
+@dataclass
+class TurnEvent:
+    phase: str
+    step: int
+    index: int = 0
+    name: str = ""
+    arguments: dict = field(default_factory=dict)
+    output: str = ""
+    exit_code: int = 0
+    elapsed: float = 0.0
 
 
 def _command_timeout() -> int:
@@ -355,7 +369,7 @@ TOOL_SCHEMAS = [
 ]
 
 
-def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
+def _dispatch(name: str, arguments: dict, sandbox_root: Path) -> dict[str, str | int]:
     if name == "list_files":
         result = list_files(sandbox_root, arguments.get("path", "."))
     elif name == "search_files":
@@ -404,17 +418,29 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
             arguments["command"], sandbox_root, arguments.get("timeout", _command_timeout())
         )
     else:
-        return f"Error: unknown tool '{name}'"
+        return {
+            "stdout": "",
+            "stderr": f"Error: unknown tool '{name}'",
+            "exit_code": 1,
+        }
+    return result
 
+
+def execute_tool_result(name: str, arguments: dict, sandbox_root: Path) -> tuple[str, int]:
+    result = _dispatch(name, arguments, sandbox_root)
+    exit_code = int(result["exit_code"])
     output = (str(result["stdout"]) + str(result["stderr"])).strip()
     if name == "run_command":
-        exit_code = result["exit_code"]
         if not output:
-            return f"(no output, exit {exit_code})"
+            return f"(no output, exit {exit_code})", exit_code
         if exit_code != 0:
-            return f"{output}\n[exit {exit_code}]"
-        return output
-    return output or "(no output)"
+            return f"{output}\n[exit {exit_code}]", exit_code
+        return output, exit_code
+    return output or "(no output)", exit_code
+
+
+def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
+    return execute_tool_result(name, arguments, sandbox_root)[0]
 
 
 def run_agent_turn(
@@ -422,15 +448,18 @@ def run_agent_turn(
     user_text: str,
     sandbox_root: Path,
     override_config: dict | None = None,
-    on_tool_call: Callable[[str], None] | None = None,
+    on_event: Callable[[TurnEvent], None] | None = None,
 ) -> str:
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_text},
     ]
     max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
+    index = 0
 
-    for _ in range(max_steps):
+    for step in range(1, max_steps + 1):
+        if on_event:
+            on_event(TurnEvent(phase="thinking", step=step))
         result = call_llm_fn(messages, override_config, tools=TOOL_SCHEMAS)
         if result["status"] != "success":
             return result["content"]
@@ -445,11 +474,32 @@ def run_agent_turn(
         for call in tool_calls:
             tool_name = call["function"]["name"]
             arguments = json.loads(call["function"]["arguments"] or "{}")
-            if on_tool_call:
-                on_tool_call(f"tool: {tool_name} running...")
-            output = execute_tool(tool_name, arguments, sandbox_root)
-            if on_tool_call:
-                on_tool_call(f"tool: {tool_name} -> {output}")
+            index += 1
+            if on_event:
+                on_event(
+                    TurnEvent(
+                        phase="tool_start",
+                        step=step,
+                        index=index,
+                        name=tool_name,
+                        arguments=arguments,
+                    )
+                )
+            started = time.monotonic()
+            output, exit_code = execute_tool_result(tool_name, arguments, sandbox_root)
+            if on_event:
+                on_event(
+                    TurnEvent(
+                        phase="tool_done",
+                        step=step,
+                        index=index,
+                        name=tool_name,
+                        arguments=arguments,
+                        output=output,
+                        exit_code=exit_code,
+                        elapsed=time.monotonic() - started,
+                    )
+                )
             messages.append(
                 {"role": "tool", "tool_call_id": call["id"], "content": output}
             )

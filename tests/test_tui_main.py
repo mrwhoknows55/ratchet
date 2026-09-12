@@ -91,7 +91,7 @@ async def test_submitted_message_echoes_to_display(tmp_path):
         await pilot.press("enter")
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
-        assert any("user: hello there" in line for line in lines)
+        assert any("\u203a hello there" in line for line in lines)
 
 
 async def test_submitted_message_clears_input(tmp_path):
@@ -234,7 +234,7 @@ async def test_agent_reply_written_to_display(tmp_path):
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
-        assert any("assistant: mock-reply" in line for line in lines)
+        assert any("\u25c6 mock-reply" in line for line in lines)
 
 
 async def test_agent_reply_written_to_log_file(tmp_path):
@@ -296,8 +296,10 @@ async def test_error_reply_content_is_still_displayed(tmp_path, monkeypatch):
         assert any("[API Error] boom" in line for line in lines)
 
 
-async def test_tool_call_shows_running_and_result_in_display(tmp_path, monkeypatch):
-    (tmp_path / "a.txt").write_text("")
+async def test_tool_call_shows_a_result_line_in_display(tmp_path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "a.txt").write_text("")
     calls = []
 
     def fake_call_llm(messages, override_config=None, tools=None):
@@ -318,7 +320,7 @@ async def test_tool_call_shows_running_and_result_in_display(tmp_path, monkeypat
         return {"content": "there is a.txt", "model": "test-model", "status": "success"}
 
     monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
-    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=sandbox)
     async with app.run_test() as pilot:
         input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
@@ -327,8 +329,8 @@ async def test_tool_call_shows_running_and_result_in_display(tmp_path, monkeypat
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
-        assert any("tool: list_files running..." in line for line in lines)
-        assert any("tool: list_files -> a.txt (0 bytes)" in line for line in lines)
+        assert any(line.strip() == "1 \u25b8 list_files" for line in lines)
+        assert any("\u2713" in line and "a.txt (0 bytes)" in line for line in lines)
 
 
 async def test_tool_call_logged_to_log_file(tmp_path, monkeypatch):
@@ -362,11 +364,6 @@ async def test_tool_call_logged_to_log_file(tmp_path, monkeypatch):
         await pilot.press("enter")
         await app.workers.wait_for_complete()
     content = log_path.read_text()
-    assert re.search(
-        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} tool: list_files running\.\.\.$",
-        content,
-        re.MULTILINE,
-    )
     assert re.search(
         r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} tool: list_files -> a\.txt \(0 bytes\)$",
         content,
@@ -517,3 +514,310 @@ async def test_newline_keys_insert_newline_instead_of_submitting(tmp_path):
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
         assert not any("user:" in line for line in lines)
+
+
+def test_summarize_output_keeps_a_short_single_line():
+    assert tui_main.summarize_output("Wrote 5 bytes to 'a.txt'") == "Wrote 5 bytes to 'a.txt'"
+
+
+def test_summarize_output_collapses_multiple_lines_to_a_count():
+    assert tui_main.summarize_output("one\ntwo\nthree") == "3 lines"
+
+
+def test_summarize_output_truncates_a_long_single_line():
+    summary = tui_main.summarize_output("x" * 300)
+    assert len(summary) <= 100
+    assert summary.endswith("…")
+
+
+def test_summarize_output_handles_empty_output():
+    assert tui_main.summarize_output("") == "(no output)"
+
+
+def test_format_tool_line_marks_success_with_elapsed():
+    event = tui_main.TurnEvent(
+        phase="tool_done", step=1, index=1, name="list_files", output="a.txt",
+        exit_code=0, elapsed=0.12
+    )
+    line = tui_main.format_tool_line(event)
+    assert "✓" in line
+    assert "0.1s" in line
+    assert "a.txt" in line
+
+
+def test_format_tool_line_marks_failure():
+    event = tui_main.TurnEvent(
+        phase="tool_done", step=1, name="read_files", output="File not found", exit_code=1
+    )
+    line = tui_main.format_tool_line(event)
+    assert "✗" in line
+    assert "✓" not in line
+
+
+def test_format_tool_line_escapes_markup_in_output():
+    event = tui_main.TurnEvent(
+        phase="tool_done", step=1, name="read_files", output="1| [bold]hi", exit_code=0
+    )
+    assert "\\[bold]" in tui_main.format_tool_line(event)
+
+
+def test_format_log_line_stays_plain_text():
+    event = tui_main.TurnEvent(
+        phase="tool_done", step=1, name="list_files", output="a.txt", exit_code=0
+    )
+    assert tui_main.format_log_line(event) == "tool: list_files -> a.txt"
+
+
+async def test_status_bar_is_hidden_when_idle(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test():
+        assert not app.query_one("#status", tui_main.StatusBar).display
+
+
+async def test_status_bar_shows_elapsed_while_working(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test():
+        bar = app.query_one("#status", tui_main.StatusBar)
+        bar.start()
+        assert bar.display
+        assert bar.render_text().endswith("s")
+
+
+async def test_status_bar_hides_when_stopped(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test():
+        bar = app.query_one("#status", tui_main.StatusBar)
+        bar.start()
+        bar.stop()
+        assert not bar.display
+
+
+async def test_status_bar_advance_changes_the_spinner_frame(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test():
+        bar = app.query_one("#status", tui_main.StatusBar)
+        bar.start()
+        first = bar.render_text()[0]
+        bar.advance()
+        assert bar.render_text()[0] != first
+
+
+async def test_status_bar_is_hidden_again_after_a_turn(tmp_path, monkeypatch):
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        assert not app.query_one("#status", tui_main.StatusBar).display
+
+
+async def test_prompt_and_reply_use_role_markers(tmp_path):
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]
+        assert any(line.startswith("› hello") for line in lines)
+        assert any(line.startswith("◆ mock-reply") for line in lines)
+
+
+async def test_error_reply_uses_the_error_marker(tmp_path, monkeypatch):
+    def failing_call_llm(messages, override_config=None, tools=None):
+        return {
+            "content": "[API Error] boom",
+            "model": "test-model",
+            "status": "error",
+            "error": "boom",
+        }
+
+    monkeypatch.setattr(tui_main, "call_llm", failing_call_llm)
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]
+        assert any(line.startswith("! [API Error] boom") for line in lines)
+
+
+async def test_user_text_with_markup_is_not_interpreted(tmp_path):
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "read [bold]file"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]
+        assert any("[bold]file" in line for line in lines)
+
+
+def test_format_tool_args_uses_the_path_for_file_tools():
+    assert tui_main.format_tool_args("read_files", {"path": "app/a.txt"}) == "app/a.txt"
+
+
+def test_format_tool_args_uses_the_command_for_run_command():
+    assert tui_main.format_tool_args("run_command", {"command": "tar -tf x.tar"}) == "tar -tf x.tar"
+
+
+def test_format_tool_args_uses_the_query_for_search_web():
+    assert tui_main.format_tool_args("search_web", {"query": "asyncio"}) == "asyncio"
+
+
+def test_format_tool_args_shows_source_and_destination():
+    args = tui_main.format_tool_args("copy_file", {"source": "a.txt", "destination": "b.txt"})
+    assert args == "a.txt → b.txt"
+
+
+def test_format_tool_args_is_empty_when_there_is_nothing_to_show():
+    assert tui_main.format_tool_args("list_files", {}) == ""
+
+
+def test_format_tool_args_truncates_a_long_value():
+    args = tui_main.format_tool_args("run_command", {"command": "x" * 200})
+    assert len(args) <= 80
+    assert args.endswith("…")
+
+
+def test_format_call_line_numbers_the_step_and_names_the_tool():
+    event = tui_main.TurnEvent(
+        phase="tool_start", step=1, index=3, name="run_command",
+        arguments={"command": "tar -tf x.tar"}
+    )
+    line = tui_main.format_call_line(event)
+    assert "3" in line
+    assert "run_command" in line
+    assert "tar -tf x.tar" in line
+
+
+def test_format_call_line_escapes_markup_in_arguments():
+    event = tui_main.TurnEvent(
+        phase="tool_start", step=1, index=1, name="read_files", arguments={"path": "[a].txt"}
+    )
+    assert "\\[a]" in tui_main.format_call_line(event)
+
+
+async def test_transcript_keeps_the_call_line_and_the_result(tmp_path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "a.txt").write_text("one\ntwo\nthree\nfour")
+    calls = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls.append(messages)
+        if len(calls) == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_files",
+                            "arguments": '{"path": "a.txt"}',
+                        },
+                    }
+                ],
+            }
+        return {"content": "read it", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=sandbox)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "read a.txt"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]
+
+    assert any("read_files" in line and "a.txt" in line for line in lines)
+    assert any("✓" in line and "4 lines" in line for line in lines)
+    assert not any("1| one" in line for line in lines)
+
+
+async def test_call_line_is_logged_with_its_arguments(tmp_path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "a.txt").write_text("hello")
+    calls = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls.append(messages)
+        if len(calls) == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_files",
+                            "arguments": '{"path": "a.txt"}',
+                        },
+                    }
+                ],
+            }
+        return {"content": "read it", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    log_path = tmp_path / "ratchet.log"
+    app = RatchetApp(log_path=log_path, sandbox_root=sandbox)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "read a.txt"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+
+    content = log_path.read_text()
+    assert "tool: read_files(a.txt)" in content
+    assert "tool: read_files -> 1| hello" in content
+
+
+def test_format_tool_line_colors_a_success_green():
+    event = tui_main.TurnEvent(
+        phase="tool_done", step=1, index=1, name="list_files", output="a.txt", exit_code=0
+    )
+    line = tui_main.format_tool_line(event)
+    assert "[green]" in line
+    assert "[red]" not in line
+
+
+def test_format_tool_line_colors_the_whole_failure_red():
+    event = tui_main.TurnEvent(
+        phase="tool_done", step=1, index=1, name="read_files",
+        output="File not found: 'a.txt'", exit_code=1
+    )
+    line = tui_main.format_tool_line(event)
+    assert line.count("[red]") == 1
+    assert line.rstrip().endswith("[/red]")
+    assert "[green]" not in line
+
+
+def test_format_reply_line_keeps_the_text_plain():
+    line = tui_main.format_reply_line("all done")
+    assert "all done" in line
+    assert "bold" not in line
+    assert "cyan" not in line
+
+
+def test_format_reply_line_escapes_markup():
+    assert "\\[bold]" in tui_main.format_reply_line("[bold]hi")
+
+
+def test_format_error_line_is_red():
+    line = tui_main.format_error_line("[API Error] boom")
+    assert "[red]" in line
+    assert "! " in line

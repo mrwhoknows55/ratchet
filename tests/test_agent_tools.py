@@ -113,7 +113,7 @@ def test_run_agent_turn_executes_tool_call_and_returns_final_reply(tmp_path):
     assert tool_message["content"] == "a.txt (0 bytes)"
 
 
-def test_run_agent_turn_calls_on_tool_call_before_and_after_execution(tmp_path):
+def test_run_agent_turn_notifies_around_each_tool_call(tmp_path):
     (tmp_path / "a.txt").write_text("")
     llm_calls = []
     notifications = []
@@ -136,16 +136,18 @@ def test_run_agent_turn_calls_on_tool_call_before_and_after_execution(tmp_path):
         return {"content": "there is a.txt", "model": "test-model", "status": "success"}
 
     agent_tools.run_agent_turn(
-        fake_call_llm, "what files exist?", tmp_path, on_tool_call=notifications.append
+        fake_call_llm, "what files exist?", tmp_path, on_event=notifications.append
     )
 
-    assert notifications == [
-        "tool: list_files running...",
-        "tool: list_files -> a.txt (0 bytes)",
+    assert [(e.phase, e.name) for e in notifications] == [
+        ("thinking", ""),
+        ("tool_start", "list_files"),
+        ("tool_done", "list_files"),
+        ("thinking", ""),
     ]
 
 
-def test_run_agent_turn_without_on_tool_call_does_not_error(tmp_path):
+def test_run_agent_turn_without_on_event_does_not_error(tmp_path):
     (tmp_path / "a.txt").write_text("")
     calls = []
 
@@ -551,3 +553,179 @@ def test_execute_tool_fetch_url_delegates_to_the_web_module(tmp_path, monkeypatc
 
     assert calls == {"url": "https://a.test"}
     assert result == "# Page"
+
+
+def test_execute_tool_result_returns_output_and_exit_code(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    output, exit_code = agent_tools.execute_tool_result("read_files", {"path": "a.txt"}, tmp_path)
+    assert output == "1| hello"
+    assert exit_code == 0
+
+
+def test_execute_tool_result_reports_a_failing_exit_code(tmp_path):
+    output, exit_code = agent_tools.execute_tool_result(
+        "read_files", {"path": "missing.txt"}, tmp_path
+    )
+    assert exit_code == 1
+    assert "not found" in output.lower()
+
+
+def test_execute_tool_result_reports_unknown_tool(tmp_path):
+    output, exit_code = agent_tools.execute_tool_result("nope", {}, tmp_path)
+    assert exit_code == 1
+    assert "unknown tool" in output.lower()
+
+
+def _tool_turn_events(tmp_path):
+    events = []
+    calls = {"n": 0}
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "function": {"name": "list_files", "arguments": "{}"},
+                    }
+                ],
+            }
+        return {"content": "done", "model": "test-model", "status": "success"}
+
+    agent_tools.run_agent_turn(
+        fake_call_llm, "what files exist?", tmp_path, on_event=events.append
+    )
+    return events
+
+
+def test_run_agent_turn_emits_thinking_start_and_done_phases(tmp_path):
+    (tmp_path / "a.txt").write_text("")
+    phases = [event.phase for event in _tool_turn_events(tmp_path)]
+    assert phases == ["thinking", "tool_start", "tool_done", "thinking"]
+
+
+def test_run_agent_turn_done_event_carries_name_output_and_exit_code(tmp_path):
+    (tmp_path / "a.txt").write_text("")
+    done = [e for e in _tool_turn_events(tmp_path) if e.phase == "tool_done"][0]
+    assert done.name == "list_files"
+    assert done.output == "a.txt (0 bytes)"
+    assert done.exit_code == 0
+    assert done.elapsed >= 0
+
+
+def test_run_agent_turn_numbers_each_step(tmp_path):
+    (tmp_path / "a.txt").write_text("")
+    events = _tool_turn_events(tmp_path)
+    assert [e.step for e in events] == [1, 1, 1, 2]
+
+
+def test_run_agent_turn_reports_a_failing_tool_exit_code(tmp_path):
+    events = []
+    calls = {"n": 0}
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "function": {
+                            "name": "read_files",
+                            "arguments": '{"path": "missing.txt"}',
+                        },
+                    }
+                ],
+            }
+        return {"content": "done", "model": "test-model", "status": "success"}
+
+    agent_tools.run_agent_turn(fake_call_llm, "read it", tmp_path, on_event=events.append)
+
+    done = [e for e in events if e.phase == "tool_done"][0]
+    assert done.exit_code == 1
+
+
+def test_run_agent_turn_start_event_carries_the_arguments(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    events = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        if len(messages) < 3:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "function": {
+                            "name": "read_files",
+                            "arguments": '{"path": "a.txt"}',
+                        },
+                    }
+                ],
+            }
+        return {"content": "done", "model": "test-model", "status": "success"}
+
+    agent_tools.run_agent_turn(fake_call_llm, "read it", tmp_path, on_event=events.append)
+
+    start = [e for e in events if e.phase == "tool_start"][0]
+    assert start.arguments == {"path": "a.txt"}
+
+
+def test_run_agent_turn_numbers_tool_calls_across_rounds(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    events = []
+    calls = {"n": 0}
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": f"call_{calls['n']}",
+                        "function": {"name": "list_files", "arguments": "{}"},
+                    }
+                ],
+            }
+        return {"content": "done", "model": "test-model", "status": "success"}
+
+    agent_tools.run_agent_turn(fake_call_llm, "look twice", tmp_path, on_event=events.append)
+
+    indexes = [e.index for e in events if e.phase == "tool_done"]
+    assert indexes == [1, 2]
+
+
+def test_run_agent_turn_numbers_parallel_tool_calls_in_one_round(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    events = []
+    calls = {"n": 0}
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {"id": "c1", "function": {"name": "list_files", "arguments": "{}"}},
+                    {"id": "c2", "function": {"name": "list_files", "arguments": "{}"}},
+                ],
+            }
+        return {"content": "done", "model": "test-model", "status": "success"}
+
+    agent_tools.run_agent_turn(fake_call_llm, "look", tmp_path, on_event=events.append)
+
+    assert [e.index for e in events if e.phase == "tool_start"] == [1, 2]
