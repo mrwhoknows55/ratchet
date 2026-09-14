@@ -5,7 +5,14 @@ from rich.console import Console
 from rich.markup import escape
 
 from ratchet.agent.client import call_llm
-from ratchet.agent.tools import TurnEvent, run_agent_turn
+from ratchet.agent.tools import (
+    SYSTEM_PROMPT,
+    TurnEvent,
+    clear_session,
+    load_session,
+    run_agent_turn,
+    save_session,
+)
 from ratchet.shell.executor import run_command
 from ratchet.tui.main import (
     format_call_line,
@@ -15,8 +22,15 @@ from ratchet.tui.main import (
 )
 from ratchet.tui.main import main as run_tui
 
+DEFAULT_SESSION_PATH = Path("log/session.json")
 
-def run_cli(prompt: str, mode: str = "chat", sandbox_root: Path | None = None) -> None:
+
+def run_cli(
+    prompt: str,
+    mode: str = "chat",
+    sandbox_root: Path | None = None,
+    session_path: Path | None = None,
+) -> None:
     console = Console()
     root = sandbox_root or (Path.cwd() / "sandbox")
     console.print(f"[bold]› {escape(prompt)}[/bold]")
@@ -26,6 +40,9 @@ def run_cli(prompt: str, mode: str = "chat", sandbox_root: Path | None = None) -
         output = (result["stdout"] + result["stderr"]).strip() or "(no output)"
         reply = f"{output} [exit {result['exit_code']}]"
     else:
+        path = session_path or DEFAULT_SESSION_PATH
+        messages = load_session(path) or [{"role": "system", "content": SYSTEM_PROMPT}]
+
         def on_event(event: TurnEvent) -> None:
             if event.phase == "thinking":
                 return
@@ -34,15 +51,20 @@ def run_cli(prompt: str, mode: str = "chat", sandbox_root: Path | None = None) -
             else:
                 console.print(format_tool_line(event))
 
-        reply = run_agent_turn(call_llm, prompt, root, None, on_event)
+        reply = run_agent_turn(call_llm, prompt, root, None, on_event, messages)
+        save_session(messages, path)
 
     console.print(format_error_line(reply) if reply.startswith("[") else format_reply_line(reply))
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="ratchet")
+    parser.add_argument(
+        "--new", "--clear", "--reset", dest="reset_session", action="store_true"
+    )
     parser.add_argument("args", nargs="*", metavar="[shell] [prompt ...]")
-    args = list(parser.parse_args(argv).args)
+    parsed = parser.parse_args(argv)
+    args = list(parsed.args)
 
     mode = "chat"
     if args and args[0] == "shell":
@@ -50,6 +72,13 @@ def main(argv: list[str] | None = None) -> None:
         args.pop(0)
 
     prompt = " ".join(args).strip()
+
+    if parsed.reset_session:
+        clear_session(DEFAULT_SESSION_PATH)
+        if not prompt:
+            Console().print("[bold yellow]Session history cleared.[/bold yellow]")
+            return
+
     if prompt:
         run_cli(prompt, mode)
     else:

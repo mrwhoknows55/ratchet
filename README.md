@@ -73,6 +73,19 @@ uv run ratchet "list the files"
 uv run ratchet shell "ls"
 ```
 
+Headless mode persists conversation memory across process calls, to `log/session.json`:
+
+```
+uv run ratchet "My name is Sam."
+uv run ratchet "What is my name?"
+> Your name is Sam.
+
+# wipe stored session memory (any of the three works)
+uv run ratchet --new "What is my name?"
+uv run ratchet --clear
+uv run ratchet --reset
+```
+
 ## Test
 
 ```
