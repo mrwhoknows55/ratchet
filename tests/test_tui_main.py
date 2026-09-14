@@ -406,7 +406,7 @@ async def test_tool_call_shows_a_result_line_in_display(tmp_path, monkeypatch):
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
-        assert any(line.strip() == "1 \u25b8 list_files" for line in lines)
+        assert any("list_files" in line for line in lines)
         assert any("\u2713" in line and "a.txt (0 bytes)" in line for line in lines)
 
 

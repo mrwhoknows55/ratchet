@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from rich.markup import escape
+from rich.panel import Panel
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -89,6 +90,13 @@ def format_log_line(event: TurnEvent) -> str:
 def format_call_log_line(event: TurnEvent) -> str:
     args = format_tool_args(event.name, event.arguments)
     return f"tool: {event.name}({args})"
+
+
+def format_tool_panel(event: TurnEvent) -> Panel:
+    body = f"{format_call_line(event).strip()}\n{format_tool_line(event).strip()}"
+    border_style = "red" if event.exit_code != 0 else "green"
+    title = f"{event.index} {escape(event.name)}"
+    return Panel(body, title=title, border_style=border_style, expand=False)
 
 
 class StatusBar(Static):
@@ -273,12 +281,10 @@ class RatchetApp(App):
     def _on_turn_event(self, event: TurnEvent) -> None:
         if event.phase == "thinking":
             return
-        messages = self.query_one("#messages", RichLog)
         if event.phase == "tool_start":
-            messages.write(format_call_line(event))
             self._write_log(format_call_log_line(event))
             return
-        messages.write(format_tool_line(event))
+        self.query_one("#messages", RichLog).write(format_tool_panel(event))
         self._write_log(format_log_line(event))
 
     def _write_log(self, message: str) -> None:
