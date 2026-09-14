@@ -48,25 +48,8 @@ class TurnEvent:
 def _command_timeout() -> int:
     return load_config().get("agent", {}).get("command_timeout", DEFAULT_COMMAND_TIMEOUT)
 
-SYSTEM_PROMPT = (
-    "You are a coding agent in a sandboxed directory. "
-    "Look before you change: read or list what you need first. "
-    "Do not repeat a call with the same arguments - reuse what it told you. "
-    "Prefer the narrowest tool, and edit files in place rather than "
-    "rewriting them. "
-    "Use run_command for what the file tools do not cover. It takes no pipes, "
-    "redirects or globs: for those, or for multi-step work, write a script and "
-    "run it. python (with openpyxl), yt-dlp and ffmpeg are on PATH; raise "
-    "timeout for slow downloads rather than retrying. "
-    "search_web and fetch_url reach the internet and need TAVILY_API_KEY; "
-    "search, then fetch only the URL worth reading. "
-    "File contents are line-numbered as 'N| '; the prefix is not file content. "
-    "If a call fails, read the error and adjust instead of retrying it. "
-    "Match the request exactly - the named path, the exact text, a trailing "
-    "newline when asked - and create nothing it did not ask for. "
-    "Never report a result you have not read back. "
-    "Stop and answer once the task is done."
-)
+SYSTEM_PROMPT_PATH = Path(__file__).parent.parent.parent.parent / "prompts" / "system.md"
+SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 _PATH_PROPERTY = {"path": {"type": "string", "description": "Path relative to the sandbox root."}}
 

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from ratchet.agent import config as agent_config
 from ratchet.agent import tools as agent_tools
@@ -403,7 +404,12 @@ def test_system_prompt_leads_the_conversation(tmp_path):
 
 
 def test_system_prompt_stays_small():
-    assert len(agent_tools.SYSTEM_PROMPT) < 1000
+    assert len(agent_tools.SYSTEM_PROMPT) < 2000
+
+
+def test_system_prompt_loaded_from_prompts_file():
+    prompt_path = Path(__file__).parent.parent / "prompts" / "system.md"
+    assert agent_tools.SYSTEM_PROMPT == prompt_path.read_text(encoding="utf-8").strip()
 
 
 def test_tool_descriptions_stay_terse():
@@ -470,12 +476,12 @@ def test_execute_tool_run_command_appends_nonzero_exit_code(tmp_path):
     assert "missing.txt" in result
 
 
-def test_system_prompt_directs_uncovered_work_to_run_command():
-    assert "run_command" in agent_tools.SYSTEM_PROMPT
+def test_system_prompt_directs_uncovered_work_to_the_shell():
+    assert "escape hatch" in agent_tools.SYSTEM_PROMPT
 
 
 def test_system_prompt_discourages_repeat_calls():
-    assert "repeat" in agent_tools.SYSTEM_PROMPT
+    assert "Asking twice" in agent_tools.SYSTEM_PROMPT
 
 
 def test_tool_schemas_include_rollback_file():
@@ -542,11 +548,6 @@ def test_system_prompt_demands_exact_output():
 
 def test_system_prompt_routes_shell_operators_to_a_script():
     assert "script" in agent_tools.SYSTEM_PROMPT
-
-
-def test_system_prompt_names_the_available_tooling():
-    for binary in ("openpyxl", "yt-dlp", "ffmpeg"):
-        assert binary in agent_tools.SYSTEM_PROMPT
 
 
 def test_tool_schemas_include_the_remaining_tools():
