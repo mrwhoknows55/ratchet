@@ -45,6 +45,20 @@ def test_run_cli_chat_prints_tool_chain_and_reply(monkeypatch, tmp_path, capsys)
     assert "done" in out
 
 
+def test_run_cli_chat_announces_a_tool_before_it_runs(monkeypatch, tmp_path, capsys):
+    def fake_run_agent_turn(call_llm_fn, text, sandbox_root, override_config, on_event, messages):
+        on_event(
+            TurnEvent(phase="tool_start", step=1, name="read_file", arguments={"path": "a.txt"})
+        )
+        on_event(TurnEvent(phase="tool_done", step=1, name="read_file", output="hi", elapsed=0.2))
+        return "done"
+
+    monkeypatch.setattr(cli, "run_agent_turn", fake_run_agent_turn)
+    cli.run_cli("read a.txt", sandbox_root=tmp_path, session_path=tmp_path / "session.json")
+    out = capsys.readouterr().out
+    assert "running read_file" in out
+
+
 def test_run_cli_chat_persists_session_across_calls(monkeypatch, tmp_path):
     calls = []
 

@@ -17,6 +17,7 @@ from ratchet.agent.client import call_llm
 from ratchet.agent.config import load_config
 from ratchet.agent.models import load_supported_models
 from ratchet.agent.tools import (
+    DEFAULT_MAX_STEPS,
     SYSTEM_PROMPT,
     TurnEvent,
     clear_session,
@@ -83,6 +84,10 @@ def format_error_line(reply: str) -> str:
     return f"[red]! {escape(reply)}[/red]"
 
 
+def format_prompt_panel(text: str) -> Panel:
+    return Panel(f"[bold]› {escape(text)}[/bold]", border_style="cyan", expand=False)
+
+
 def format_reply_panel(reply: str) -> Panel:
     return Panel(format_reply_line(reply), border_style="green", expand=False)
 
@@ -115,6 +120,9 @@ class StatusBar(Static):
         self._frame = 0
         self._started = 0.0
         self._timer = None
+        self._step = 0
+        self._max_steps = 0
+        self._label = ""
 
     def on_mount(self) -> None:
         self.display = False
@@ -123,6 +131,9 @@ class StatusBar(Static):
     def start(self) -> None:
         self._started = time.monotonic()
         self._frame = 0
+        self._step = 0
+        self._max_steps = 0
+        self._label = ""
         self.display = True
         self.update(self.render_text())
         if self._timer:
@@ -132,13 +143,24 @@ class StatusBar(Static):
         self._frame = (self._frame + 1) % len(self.FRAMES)
         self.update(self.render_text())
 
+    def set_step(self, step: int, max_steps: int, label: str = "") -> None:
+        self._step = step
+        self._max_steps = max_steps
+        self._label = label
+        self.update(self.render_text())
+
     def stop(self) -> None:
         if self._timer:
             self._timer.pause()
         self.display = False
 
     def render_text(self) -> str:
-        return f"{self.FRAMES[self._frame]} {time.monotonic() - self._started:.1f}s"
+        text = f"{self.FRAMES[self._frame]} {time.monotonic() - self._started:.1f}s"
+        if self._max_steps:
+            text += f" · step {self._step}/{self._max_steps}"
+            if self._label:
+                text += f" · {self._label}"
+        return text
 
 
 class PromptInput(TextArea):
@@ -251,7 +273,7 @@ class RatchetApp(App):
         text = event.text
         if not text.strip():
             return
-        self.query_one("#messages", RichLog).write(f"[bold]\u203a {escape(text)}[/bold]")
+        self.query_one("#messages", RichLog).write(format_prompt_panel(text))
         self._write_log(f"user: {text}")
         event.prompt_input.text = ""
         self._request_reply(text)
@@ -287,11 +309,16 @@ class RatchetApp(App):
         self._write_log(log_message)
 
     def _on_turn_event(self, event: TurnEvent) -> None:
+        max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
+        status = self.query_one("#status", StatusBar)
         if event.phase == "thinking":
+            status.set_step(event.step, max_steps, "thinking")
             return
         if event.phase == "tool_start":
+            status.set_step(event.step, max_steps, f"running {event.name}")
             self._write_log(format_call_log_line(event))
             return
+        status.set_step(event.step, max_steps)
         self.query_one("#messages", RichLog).write(format_tool_panel(event))
         self._write_log(format_log_line(event))
 

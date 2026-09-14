@@ -16,6 +16,7 @@ from ratchet.agent.tools import (
 from ratchet.shell.executor import run_command
 from ratchet.tui.main import (
     format_error_panel,
+    format_prompt_panel,
     format_reply_panel,
     format_tool_panel,
 )
@@ -32,7 +33,7 @@ def run_cli(
 ) -> None:
     console = Console()
     root = sandbox_root or (Path.cwd() / "sandbox")
-    console.print(f"[bold]› {escape(prompt)}[/bold]")
+    console.print(format_prompt_panel(prompt))
 
     if mode == "shell":
         result = run_command(prompt, root)
@@ -43,7 +44,10 @@ def run_cli(
         messages = load_session(path) or [{"role": "system", "content": SYSTEM_PROMPT}]
 
         def on_event(event: TurnEvent) -> None:
-            if event.phase == "thinking" or event.phase == "tool_start":
+            if event.phase == "thinking":
+                return
+            if event.phase == "tool_start":
+                console.print(f"[dim]→ running {escape(event.name)}...[/dim]")
                 return
             console.print(format_tool_panel(event))
 

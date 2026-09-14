@@ -679,6 +679,93 @@ async def test_status_bar_advance_changes_the_spinner_frame(tmp_path):
         assert bar.render_text()[0] != first
 
 
+async def test_status_bar_omits_step_progress_before_set(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test():
+        bar = app.query_one("#status", tui_main.StatusBar)
+        bar.start()
+        assert "/" not in bar.render_text()
+
+
+async def test_status_bar_shows_step_progress_once_set(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test():
+        bar = app.query_one("#status", tui_main.StatusBar)
+        bar.start()
+        bar.set_step(2, 12, "running list_files")
+        text = bar.render_text()
+        assert "2/12" in text
+        assert "running list_files" in text
+
+
+async def test_thinking_phase_reports_step_progress(tmp_path, monkeypatch):
+    def fake_call_llm(messages, override_config=None, tools=None):
+        return {"content": "done", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = make_app(tmp_path)
+    seen = []
+    async with app.run_test() as pilot:
+        bar = app.query_one("#status", tui_main.StatusBar)
+        original_set_step = bar.set_step
+        bar.set_step = lambda step, max_steps, label="": (
+            seen.append((step, max_steps, label)),
+            original_set_step(step, max_steps, label),
+        )[1]
+
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+
+    assert seen[0] == (1, 12, "thinking")
+
+
+async def test_tool_start_reports_a_running_label_on_status_bar(tmp_path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "a.txt").write_text("")
+    calls = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls.append(messages)
+        if len(calls) == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_files", "arguments": "{}"},
+                    }
+                ],
+            }
+        return {"content": "there is a.txt", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=sandbox)
+    seen = []
+    async with app.run_test() as pilot:
+        bar = app.query_one("#status", tui_main.StatusBar)
+        original_set_step = bar.set_step
+        bar.set_step = lambda step, max_steps, label="": (
+            seen.append((step, max_steps, label)),
+            original_set_step(step, max_steps, label),
+        )[1]
+
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "what files exist?"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+
+    labels = [label for _, _, label in seen]
+    assert "running list_files" in labels
+
+
 async def test_status_bar_is_hidden_again_after_a_turn(tmp_path, monkeypatch):
     app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
     async with app.run_test() as pilot:
@@ -699,7 +786,7 @@ async def test_prompt_and_reply_use_role_markers(tmp_path):
         await pilot.press("enter")
         await app.workers.wait_for_complete()
         lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]
-        assert any(line.startswith("› hello") for line in lines)
+        assert any("› hello" in line for line in lines)
         assert any("mock-reply" in line for line in lines)
 
 
