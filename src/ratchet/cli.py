@@ -15,8 +15,8 @@ from ratchet.agent.tools import (
 )
 from ratchet.shell.executor import run_command
 from ratchet.tui.main import (
-    format_error_line,
-    format_reply_line,
+    format_error_panel,
+    format_reply_panel,
     format_tool_panel,
 )
 from ratchet.tui.main import main as run_tui
@@ -50,7 +50,7 @@ def run_cli(
         reply = run_agent_turn(call_llm, prompt, root, None, on_event, messages)
         save_session(messages, path)
 
-    console.print(format_error_line(reply) if reply.startswith("[") else format_reply_line(reply))
+    console.print(format_error_panel(reply) if reply.startswith("[") else format_reply_panel(reply))
 
 
 def main(argv: list[str] | None = None) -> None:

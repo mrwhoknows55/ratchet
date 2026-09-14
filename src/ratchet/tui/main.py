@@ -83,6 +83,14 @@ def format_error_line(reply: str) -> str:
     return f"[red]! {escape(reply)}[/red]"
 
 
+def format_reply_panel(reply: str) -> Panel:
+    return Panel(format_reply_line(reply), border_style="green", expand=False)
+
+
+def format_error_panel(reply: str) -> Panel:
+    return Panel(format_error_line(reply), border_style="red", expand=False)
+
+
 def format_log_line(event: TurnEvent) -> str:
     return f"tool: {event.name} -> {event.output}"
 
@@ -274,8 +282,8 @@ class RatchetApp(App):
         finally:
             status.stop()
 
-        line = format_error_line(reply) if reply.startswith("[") else format_reply_line(reply)
-        self.query_one("#messages", RichLog).write(line)
+        panel = format_error_panel(reply) if reply.startswith("[") else format_reply_panel(reply)
+        self.query_one("#messages", RichLog).write(panel)
         self._write_log(log_message)
 
     def _on_turn_event(self, event: TurnEvent) -> None:
