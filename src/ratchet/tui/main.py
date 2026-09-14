@@ -15,7 +15,14 @@ from textual.widgets.option_list import Option
 from ratchet.agent.client import call_llm
 from ratchet.agent.config import load_config
 from ratchet.agent.models import load_supported_models
-from ratchet.agent.tools import TurnEvent, run_agent_turn
+from ratchet.agent.tools import (
+    SYSTEM_PROMPT,
+    TurnEvent,
+    clear_session,
+    load_session,
+    run_agent_turn,
+    save_session,
+)
 from ratchet.shell.executor import run_command
 
 DEFAULT_LOG_PATH = Path("log/ratchet.log")
@@ -192,12 +199,17 @@ class RatchetApp(App):
         log_path: Path = DEFAULT_LOG_PATH,
         mode: str = "chat",
         sandbox_root: Path | None = None,
+        session_path: Path | None = None,
     ) -> None:
         super().__init__()
         self.log_path = log_path
         self.mode = mode
         self.sandbox_root = sandbox_root or (Path.cwd() / "sandbox")
+        self.session_path = session_path or (log_path.parent / "session.json")
         self.selected_model: dict[str, str] | None = None
+        self.messages: list[dict] = load_session(self.session_path) or [
+            {"role": "system", "content": SYSTEM_PROMPT}
+        ]
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -247,8 +259,10 @@ class RatchetApp(App):
                     self.sandbox_root,
                     override_config,
                     lambda event: self.call_from_thread(self._on_turn_event, event),
+                    self.messages,
                 )
                 log_message = f"assistant: {reply}"
+                await asyncio.to_thread(save_session, self.messages, self.session_path)
         finally:
             status.stop()
 
@@ -275,6 +289,8 @@ class RatchetApp(App):
 
     def action_clear_log(self) -> None:
         self.query_one("#messages", RichLog).clear()
+        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        clear_session(self.session_path)
         self._write_log("log cleared")
 
     def action_pick_model(self) -> None:

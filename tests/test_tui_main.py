@@ -1,3 +1,4 @@
+import json
 import re
 
 import pytest
@@ -194,6 +195,82 @@ async def test_ctrl_l_clears_message_log(tmp_path):
         assert len(richlog.lines) > 0
         await pilot.press("ctrl+l")
         assert len(richlog.lines) == 0
+
+
+async def test_agent_remembers_earlier_turns(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        seen.append(list(messages))
+        return {"content": "mock-reply", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "first"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        input_widget.text = "second"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+
+    second_turn_messages = seen[1]
+    assert {"role": "user", "content": "first"} in second_turn_messages
+    assert {"role": "assistant", "content": "mock-reply"} in second_turn_messages
+    assert second_turn_messages[-1] == {"role": "user", "content": "second"}
+
+
+async def test_ctrl_l_resets_conversation_memory(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.press("ctrl+l")
+        assert app.messages == [{"role": "system", "content": tui_main.SYSTEM_PROMPT}]
+
+
+async def test_turn_saves_session_to_disk(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+
+    assert json.loads(app.session_path.read_text()) == app.messages
+
+
+async def test_app_loads_existing_session_on_mount(tmp_path):
+    session_path = tmp_path / "session.json"
+    saved = [
+        {"role": "system", "content": tui_main.SYSTEM_PROMPT},
+        {"role": "user", "content": "earlier"},
+        {"role": "assistant", "content": "earlier reply"},
+    ]
+    session_path.write_text(json.dumps(saved))
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", session_path=session_path)
+
+    async with app.run_test():
+        assert app.messages == saved
+
+
+async def test_ctrl_l_clears_session_file(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        assert app.session_path.exists()
+        await pilot.press("ctrl+l")
+        assert not app.session_path.exists()
 
 
 async def test_ctrl_l_on_empty_log_does_not_error(tmp_path):
@@ -488,7 +565,7 @@ async def test_multiline_message_sent_to_agent_verbatim(tmp_path, monkeypatch):
     seen = []
 
     def fake_call_llm(messages, override_config=None, tools=None):
-        seen.append(messages)
+        seen.append(list(messages))
         return {"content": "mock-reply", "model": "test-model", "status": "success"}
 
     monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)

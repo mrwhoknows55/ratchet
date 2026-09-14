@@ -1,3 +1,5 @@
+import json
+
 from ratchet.agent import config as agent_config
 from ratchet.agent import tools as agent_tools
 
@@ -82,12 +84,90 @@ def test_run_agent_turn_short_circuits_on_non_success(tmp_path):
     assert reply == "[LM Studio Offline] ..."
 
 
+def test_run_agent_turn_appends_reply_to_passed_in_messages(tmp_path):
+    def fake_call_llm(messages, override_config=None, tools=None):
+        return {"content": "hello", "model": "test-model", "status": "success"}
+
+    history = [{"role": "system", "content": "sys"}]
+    reply = agent_tools.run_agent_turn(fake_call_llm, "hi", tmp_path, messages=history)
+
+    assert reply == "hello"
+    assert history[-2] == {"role": "user", "content": "hi"}
+    assert history[-1] == {"role": "assistant", "content": "hello"}
+
+
+def test_run_agent_turn_remembers_earlier_turns(tmp_path):
+    calls = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls.append(list(messages))
+        return {"content": "ack", "model": "test-model", "status": "success"}
+
+    history = [{"role": "system", "content": "sys"}]
+    agent_tools.run_agent_turn(fake_call_llm, "first", tmp_path, messages=history)
+    agent_tools.run_agent_turn(fake_call_llm, "second", tmp_path, messages=history)
+
+    second_turn_messages = calls[1]
+    assert {"role": "user", "content": "first"} in second_turn_messages
+    assert {"role": "assistant", "content": "ack"} in second_turn_messages
+    assert second_turn_messages[-1] == {"role": "user", "content": "second"}
+
+
+def test_save_session_writes_messages_as_json(tmp_path):
+    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+    path = tmp_path / "session.json"
+
+    agent_tools.save_session(messages, path)
+
+    assert json.loads(path.read_text()) == messages
+
+
+def test_save_session_creates_parent_dirs(tmp_path):
+    path = tmp_path / "nested" / "session.json"
+
+    agent_tools.save_session([{"role": "system", "content": "sys"}], path)
+
+    assert path.exists()
+
+
+def test_load_session_round_trips_saved_messages(tmp_path):
+    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+    path = tmp_path / "session.json"
+    agent_tools.save_session(messages, path)
+
+    assert agent_tools.load_session(path) == messages
+
+
+def test_load_session_returns_none_when_missing(tmp_path):
+    assert agent_tools.load_session(tmp_path / "missing.json") is None
+
+
+def test_load_session_returns_none_on_invalid_json(tmp_path):
+    path = tmp_path / "session.json"
+    path.write_text("not json")
+
+    assert agent_tools.load_session(path) is None
+
+
+def test_clear_session_removes_file(tmp_path):
+    path = tmp_path / "session.json"
+    agent_tools.save_session([{"role": "system", "content": "sys"}], path)
+
+    agent_tools.clear_session(path)
+
+    assert not path.exists()
+
+
+def test_clear_session_missing_file_does_not_error(tmp_path):
+    agent_tools.clear_session(tmp_path / "missing.json")
+
+
 def test_run_agent_turn_executes_tool_call_and_returns_final_reply(tmp_path):
     (tmp_path / "a.txt").write_text("")
     calls = []
 
     def fake_call_llm(messages, override_config=None, tools=None):
-        calls.append(messages)
+        calls.append(list(messages))
         if len(calls) == 1:
             return {
                 "content": "",

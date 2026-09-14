@@ -443,17 +443,35 @@ def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
     return execute_tool_result(name, arguments, sandbox_root)[0]
 
 
+def save_session(messages: list[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(messages), encoding="utf-8")
+
+
+def load_session(path: Path) -> list[dict] | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def clear_session(path: Path) -> None:
+    path.unlink(missing_ok=True)
+
+
 def run_agent_turn(
     call_llm_fn: Callable,
     user_text: str,
     sandbox_root: Path,
     override_config: dict | None = None,
     on_event: Callable[[TurnEvent], None] | None = None,
+    messages: list[dict] | None = None,
 ) -> str:
-    messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_text},
-    ]
+    if messages is None:
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.append({"role": "user", "content": user_text})
     max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
     index = 0
 
@@ -466,6 +484,7 @@ def run_agent_turn(
 
         tool_calls = result.get("tool_calls") or []
         if not tool_calls:
+            messages.append({"role": "assistant", "content": result["content"]})
             return result["content"]
 
         messages.append(
