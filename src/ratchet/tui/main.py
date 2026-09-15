@@ -229,6 +229,7 @@ class RatchetApp(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+l", "clear_log", "Clear Log"),
+        Binding("ctrl+r", "reset_memory", "Reset Memory"),
         Binding("ctrl+p", "pick_model", "Pick Model"),
     ]
 
@@ -333,6 +334,11 @@ class RatchetApp(App):
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         clear_session(self.session_path)
         self._write_log("log cleared")
+
+    def action_reset_memory(self) -> None:
+        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        clear_session(self.session_path)
+        self._write_log("memory reset")
 
     def action_pick_model(self) -> None:
         self._pick_model()

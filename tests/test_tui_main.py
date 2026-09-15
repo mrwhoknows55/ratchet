@@ -273,6 +273,61 @@ async def test_ctrl_l_clears_session_file(tmp_path):
         assert not app.session_path.exists()
 
 
+async def test_ctrl_r_resets_conversation_memory(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.press("ctrl+r")
+        assert app.messages == [{"role": "system", "content": tui_main.SYSTEM_PROMPT}]
+
+
+async def test_ctrl_r_clears_session_file(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        assert app.session_path.exists()
+        await pilot.press("ctrl+r")
+        assert not app.session_path.exists()
+
+
+async def test_ctrl_r_does_not_clear_the_message_log(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        richlog = app.query_one("#messages", RichLog)
+        lines_before = len(richlog.lines)
+        await pilot.press("ctrl+r")
+        assert len(richlog.lines) == lines_before
+
+
+async def test_ctrl_r_logged_to_file(tmp_path):
+    log_path = tmp_path / "ratchet.log"
+    app = RatchetApp(log_path=log_path)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+    content = log_path.read_text()
+    assert re.search(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} memory reset$", content, re.MULTILINE)
+
+
+async def test_ctrl_r_on_empty_state_does_not_error(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        assert app.is_running
+
+
 async def test_ctrl_l_on_empty_log_does_not_error(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
