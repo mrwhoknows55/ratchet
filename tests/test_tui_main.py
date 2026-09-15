@@ -194,7 +194,9 @@ async def test_ctrl_l_clears_message_log(tmp_path):
         richlog = app.query_one("#messages", RichLog)
         assert len(richlog.lines) > 0
         await pilot.press("ctrl+l")
-        assert len(richlog.lines) == 0
+        lines = [strip.text for strip in richlog.lines]
+        assert not any("hello there" in line for line in lines)
+        assert any("cleared" in line.lower() for line in lines)
 
 
 async def test_agent_remembers_earlier_turns(tmp_path, monkeypatch):
@@ -298,7 +300,7 @@ async def test_ctrl_r_clears_session_file(tmp_path):
         assert not app.session_path.exists()
 
 
-async def test_ctrl_r_does_not_clear_the_message_log(tmp_path):
+async def test_ctrl_r_clears_the_message_log_and_shows_an_ack(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
         input_widget = app.query_one("#message_input", PromptInput)
@@ -307,9 +309,10 @@ async def test_ctrl_r_does_not_clear_the_message_log(tmp_path):
         await pilot.press("enter")
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
-        lines_before = len(richlog.lines)
         await pilot.press("ctrl+r")
-        assert len(richlog.lines) == lines_before
+        lines = [strip.text for strip in richlog.lines]
+        assert not any("hello there" in line for line in lines)
+        assert any("memory reset" in line.lower() for line in lines)
 
 
 async def test_ctrl_r_logged_to_file(tmp_path):
@@ -334,7 +337,7 @@ async def test_ctrl_l_on_empty_log_does_not_error(tmp_path):
         richlog = app.query_one("#messages", RichLog)
         await pilot.press("ctrl+l")
         assert app.is_running
-        assert len(richlog.lines) == 0
+        assert len(richlog.lines) > 0
 
 
 async def test_ctrl_l_does_not_clear_input_value(tmp_path):

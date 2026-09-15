@@ -96,6 +96,10 @@ def format_error_panel(reply: str) -> Panel:
     return Panel(format_error_line(reply), border_style="red", expand=False)
 
 
+def format_ack_panel(message: str) -> Panel:
+    return Panel(f"[green]✓ {escape(message)}[/green]", border_style="green", expand=False)
+
+
 def format_log_line(event: TurnEvent) -> str:
     return f"tool: {event.name} -> {event.output}"
 
@@ -329,16 +333,19 @@ class RatchetApp(App):
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(f"{timestamp} {message}\n")
 
-    def action_clear_log(self) -> None:
-        self.query_one("#messages", RichLog).clear()
+    def _reset_conversation(self, ack_message: str, log_message: str) -> None:
+        messages_widget = self.query_one("#messages", RichLog)
+        messages_widget.clear()
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         clear_session(self.session_path)
-        self._write_log("log cleared")
+        messages_widget.write(format_ack_panel(ack_message))
+        self._write_log(log_message)
+
+    def action_clear_log(self) -> None:
+        self._reset_conversation("Log and memory cleared.", "log cleared")
 
     def action_reset_memory(self) -> None:
-        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        clear_session(self.session_path)
-        self._write_log("memory reset")
+        self._reset_conversation("Memory reset.", "memory reset")
 
     def action_pick_model(self) -> None:
         self._pick_model()
