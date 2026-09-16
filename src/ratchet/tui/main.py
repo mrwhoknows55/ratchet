@@ -333,19 +333,19 @@ class RatchetApp(App):
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(f"{timestamp} {message}\n")
 
-    def _reset_conversation(self, ack_message: str, log_message: str) -> None:
+    def action_clear_log(self) -> None:
+        messages_widget = self.query_one("#messages", RichLog)
+        messages_widget.clear()
+        messages_widget.write(format_ack_panel("Log cleared."))
+        self._write_log("log cleared")
+
+    def action_reset_memory(self) -> None:
         messages_widget = self.query_one("#messages", RichLog)
         messages_widget.clear()
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         clear_session(self.session_path)
-        messages_widget.write(format_ack_panel(ack_message))
-        self._write_log(log_message)
-
-    def action_clear_log(self) -> None:
-        self._reset_conversation("Log and memory cleared.", "log cleared")
-
-    def action_reset_memory(self) -> None:
-        self._reset_conversation("Memory reset.", "memory reset")
+        messages_widget.write(format_ack_panel("Memory reset."))
+        self._write_log("memory reset")
 
     def action_pick_model(self) -> None:
         self._pick_model()

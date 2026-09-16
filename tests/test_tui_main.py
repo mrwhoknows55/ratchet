@@ -224,7 +224,7 @@ async def test_agent_remembers_earlier_turns(tmp_path, monkeypatch):
     assert second_turn_messages[-1] == {"role": "user", "content": "second"}
 
 
-async def test_ctrl_l_resets_conversation_memory(tmp_path):
+async def test_ctrl_l_does_not_reset_conversation_memory(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
         input_widget = app.query_one("#message_input", PromptInput)
@@ -232,8 +232,9 @@ async def test_ctrl_l_resets_conversation_memory(tmp_path):
         input_widget.text = "hello there"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
+        messages_before = list(app.messages)
         await pilot.press("ctrl+l")
-        assert app.messages == [{"role": "system", "content": tui_main.SYSTEM_PROMPT}]
+        assert app.messages == messages_before
 
 
 async def test_turn_saves_session_to_disk(tmp_path):
@@ -262,7 +263,7 @@ async def test_app_loads_existing_session_on_mount(tmp_path):
         assert app.messages == saved
 
 
-async def test_ctrl_l_clears_session_file(tmp_path):
+async def test_ctrl_l_does_not_clear_session_file(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
         input_widget = app.query_one("#message_input", PromptInput)
@@ -272,7 +273,7 @@ async def test_ctrl_l_clears_session_file(tmp_path):
         await app.workers.wait_for_complete()
         assert app.session_path.exists()
         await pilot.press("ctrl+l")
-        assert not app.session_path.exists()
+        assert app.session_path.exists()
 
 
 async def test_ctrl_r_resets_conversation_memory(tmp_path):
