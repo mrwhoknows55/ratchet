@@ -456,6 +456,23 @@ def test_execute_tool_run_command(tmp_path):
     assert "hello from sandbox" in result
 
 
+def test_tool_schemas_include_check_command():
+    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
+    assert "check_command" in names
+
+
+def test_execute_tool_check_command_found(tmp_path):
+    result = agent_tools.execute_tool("check_command", {"name": "python3"}, tmp_path)
+    assert "python3" in result
+
+
+def test_execute_tool_check_command_not_found(tmp_path):
+    result = agent_tools.execute_tool(
+        "check_command", {"name": "not_a_real_command_xyz"}, tmp_path
+    )
+    assert "not found" in result.lower()
+
+
 def test_tool_schemas_include_file_search():
     names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
     assert "file_search" in names

@@ -8,6 +8,7 @@ from ratchet.shell.executor import (
     MAX_COMMAND_TIMEOUT,
     _resolve_path,
     append_file,
+    check_command,
     copy_file,
     delete_file,
     file_search,
@@ -68,6 +69,20 @@ def test_run_command_creates_missing_sandbox_root(tmp_path):
     result = run_command("pwd", root)
     assert result["exit_code"] == 0
     assert root.is_dir()
+
+
+def test_check_command_found():
+    result = check_command("python3")
+    assert result["exit_code"] == 0
+    assert "python3" in result["stdout"]
+    assert result["stderr"] == ""
+
+
+def test_check_command_not_found():
+    result = check_command("not_a_real_command_xyz")
+    assert result["exit_code"] == 1
+    assert "not_a_real_command_xyz" in result["stderr"]
+    assert result["stdout"] == ""
 
 
 def test_list_files_returns_sorted_names(tmp_path):

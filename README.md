@@ -11,7 +11,7 @@ AI harness written in Python for local models via LM Studio.
 - Messages logged to file with timestamps, prefixed by `user:` / `assistant:` role
 - Sandboxed shell mode (`uv run ratchet shell`) for running commands scoped to a `./sandbox` directory
 - Headless CLI mode: pass a prompt to skip the TUI and print one turn — `uv run ratchet "list the files"` or `uv run ratchet shell "ls"`
-- Tool calling in chat mode: 16 tools covering reads, writes, edits, search, file management, snapshots/rollback, shell commands and the web; tool execution always runs locally, regardless of which model backend answers
+- Tool calling in chat mode: 17 tools covering reads, writes, edits, search, file management, snapshots/rollback, shell commands, PATH checks and the web; tool execution always runs locally, regardless of which model backend answers
 - Web tools (`search_web`, `fetch_url`) via the Tavily REST API — set `TAVILY_API_KEY` to enable them; everything else works without it
 
 See [`docs/model-comparison.md`](docs/model-comparison.md) for comparing the

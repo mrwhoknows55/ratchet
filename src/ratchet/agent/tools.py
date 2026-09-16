@@ -16,6 +16,7 @@ from ratchet.shell.executor import (
     DEFAULT_COMMAND_TIMEOUT,
     MAX_COMMAND_TIMEOUT,
     append_file,
+    check_command,
     copy_file,
     delete_file,
     file_search,
@@ -364,6 +365,23 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_command",
+            "description": (
+                "Check whether a command or binary is installed and on PATH, "
+                "before assuming it isn't. Returns its resolved path if found."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Command name, e.g. 'yt-dlp'."},
+                },
+                "required": ["name"],
+            },
+        },
+    },
 ]
 
 
@@ -415,6 +433,8 @@ def _dispatch(name: str, arguments: dict, sandbox_root: Path) -> dict[str, str |
         result = run_command(
             arguments["command"], sandbox_root, arguments.get("timeout", _command_timeout())
         )
+    elif name == "check_command":
+        result = check_command(arguments["name"])
     else:
         return {
             "stdout": "",

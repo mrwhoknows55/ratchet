@@ -445,3 +445,10 @@ def rollback_file(root: Path, path: str) -> dict[str, str | int]:
         "stderr": "",
         "exit_code": 0,
     }
+
+
+def check_command(name: str) -> dict[str, str | int]:
+    found = shutil.which(name)
+    if found is None:
+        return {"stdout": "", "stderr": f"'{name}' not found on PATH", "exit_code": 1}
+    return {"stdout": f"{name}: {found}", "stderr": "", "exit_code": 0}
