@@ -469,6 +469,49 @@ async def test_tool_call_shows_a_result_line_in_display(tmp_path, monkeypatch):
         assert any("\u2713" in line and "a.txt (0 bytes)" in line for line in lines)
 
 
+async def test_tool_start_appears_in_transcript_before_the_result(tmp_path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "a.txt").write_text("")
+    calls = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        calls.append(messages)
+        if len(calls) == 1:
+            return {
+                "content": "",
+                "model": "test-model",
+                "status": "success",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_files", "arguments": "{}"},
+                    }
+                ],
+            }
+        return {"content": "there is a.txt", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=sandbox)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "what files exist?"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        richlog = app.query_one("#messages", RichLog)
+        lines = [strip.text for strip in richlog.lines]
+
+    running_index = next(
+        i for i, line in enumerate(lines) if "running" in line.lower() and "list_files" in line
+    )
+    done_index = next(
+        i for i, line in enumerate(lines) if "\u2713" in line and "a.txt (0 bytes)" in line
+    )
+    assert running_index < done_index
+
+
 async def test_tool_call_logged_to_log_file(tmp_path, monkeypatch):
     (tmp_path / "a.txt").write_text("")
     calls = []

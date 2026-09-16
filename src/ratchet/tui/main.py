@@ -116,6 +116,12 @@ def format_tool_panel(event: TurnEvent) -> Panel:
     return Panel(body, title=title, border_style=border_style, expand=False)
 
 
+def format_tool_start_panel(event: TurnEvent) -> Panel:
+    body = f"{format_call_line(event).strip()} [dim]… running[/dim]"
+    title = f"{event.index} {escape(event.name)}"
+    return Panel(body, title=title, border_style="yellow", expand=False)
+
+
 class StatusBar(Static):
     FRAMES = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
 
@@ -321,6 +327,7 @@ class RatchetApp(App):
             return
         if event.phase == "tool_start":
             status.set_step(event.step, max_steps, f"running {event.name}")
+            self.query_one("#messages", RichLog).write(format_tool_start_panel(event))
             self._write_log(format_call_log_line(event))
             return
         status.set_step(event.step, max_steps)
