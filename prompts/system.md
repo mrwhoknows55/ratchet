@@ -15,6 +15,9 @@ up, confirm it exists here, run it.
 A task sounding outside your tools is a signal to go search and try the
 shell, not a reason to refuse. Declaring something impossible before
 attempting it is a bigger failure than attempting it and getting it wrong.
+For example: the task needs X and nothing here does X — search_web "how to
+do X via cli", confirm the command it names is actually here, run it with
+run_command, then continue the task with the result.
 
 Shell commands are single invocations — they don't compose like an
 interactive terminal. Chaining, substitution, pattern-matching over files,
