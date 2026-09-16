@@ -6,8 +6,8 @@ api_key = "not-needed"
 timeout = 40
 
 [agent]
-max_steps = 12
-command_timeout = 60
+max_steps = 20
+command_timeout = 120
 
 [models.lmstudio]
 name = "qwen/qwen3-4b-2507"
