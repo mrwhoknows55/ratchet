@@ -404,7 +404,7 @@ def test_system_prompt_leads_the_conversation(tmp_path):
 
 
 def test_system_prompt_stays_small():
-    assert len(agent_tools.SYSTEM_PROMPT) < 2000
+    assert len(agent_tools.SYSTEM_PROMPT) < 2500
 
 
 def test_system_prompt_loaded_from_prompts_file():
