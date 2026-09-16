@@ -409,7 +409,26 @@ def test_system_prompt_stays_small():
 
 def test_system_prompt_loaded_from_prompts_file():
     prompt_path = Path(__file__).parent.parent / "prompts" / "system.md"
-    assert agent_tools.SYSTEM_PROMPT == prompt_path.read_text(encoding="utf-8").strip()
+    template = prompt_path.read_text(encoding="utf-8").strip()
+    assert agent_tools.SYSTEM_PROMPT == template.replace(
+        "{platform}", agent_tools.detect_platform()
+    )
+
+
+def test_render_system_prompt_substitutes_the_given_platform():
+    rendered = agent_tools.render_system_prompt("Linux")
+    assert "Linux" in rendered
+    assert "{platform}" not in rendered
+
+
+def test_detect_platform_maps_darwin_to_macos(monkeypatch):
+    monkeypatch.setattr(agent_tools.platform, "system", lambda: "Darwin")
+    assert agent_tools.detect_platform() == "macOS"
+
+
+def test_detect_platform_passes_through_unknown_systems(monkeypatch):
+    monkeypatch.setattr(agent_tools.platform, "system", lambda: "FreeBSD")
+    assert agent_tools.detect_platform() == "FreeBSD"
 
 
 def test_tool_descriptions_stay_terse():

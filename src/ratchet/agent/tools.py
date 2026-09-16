@@ -1,4 +1,5 @@
 import json
+import platform
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,7 +50,21 @@ def _command_timeout() -> int:
     return load_config().get("agent", {}).get("command_timeout", DEFAULT_COMMAND_TIMEOUT)
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent.parent.parent / "prompts" / "system.md"
-SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+SYSTEM_PROMPT_TEMPLATE = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+
+_PLATFORM_NAMES = {"Darwin": "macOS"}
+
+
+def detect_platform() -> str:
+    system = platform.system()
+    return _PLATFORM_NAMES.get(system, system)
+
+
+def render_system_prompt(platform_name: str) -> str:
+    return SYSTEM_PROMPT_TEMPLATE.replace("{platform}", platform_name)
+
+
+SYSTEM_PROMPT = render_system_prompt(detect_platform())
 
 _PATH_PROPERTY = {"path": {"type": "string", "description": "Path relative to the sandbox root."}}
 
