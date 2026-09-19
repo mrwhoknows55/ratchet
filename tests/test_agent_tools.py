@@ -3,6 +3,7 @@ from pathlib import Path
 
 from ratchet.agent import config as agent_config
 from ratchet.agent import tools as agent_tools
+from ratchet.agent.context import AgentContext
 
 
 def test_tool_schemas_include_list_files():
@@ -846,3 +847,31 @@ def test_run_agent_turn_numbers_parallel_tool_calls_in_one_round(tmp_path):
     agent_tools.run_agent_turn(fake_call_llm, "look", tmp_path, on_event=events.append)
 
     assert [e.index for e in events if e.phase == "tool_start"] == [1, 2]
+
+
+def test_agent_context_defaults_to_depth_zero(tmp_path):
+    ctx = AgentContext(sandbox_root=tmp_path)
+    assert ctx.depth == 0
+    assert ctx.call_llm_fn is None
+    assert ctx.on_event is None
+    assert ctx.override_config is None
+
+
+def test_execute_tool_accepts_an_agent_context(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    ctx = AgentContext(sandbox_root=tmp_path)
+    result = agent_tools.execute_tool("read_files", {"path": "a.txt"}, ctx)
+    assert "hello" in result
+
+
+def test_execute_tool_still_accepts_a_bare_path(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    result = agent_tools.execute_tool("read_files", {"path": "a.txt"}, tmp_path)
+    assert "hello" in result
+
+
+def test_dispatch_reads_the_sandbox_root_from_the_context(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    ctx = AgentContext(sandbox_root=tmp_path, depth=3)
+    result = agent_tools._dispatch("list_files", {}, ctx)
+    assert "a.txt" in result["stdout"]

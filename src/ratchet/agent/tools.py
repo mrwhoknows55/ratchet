@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from ratchet.agent.config import load_config
+from ratchet.agent.context import AgentContext, as_context
 from ratchet.agent.web import (
     DEFAULT_MAX_RESULTS,
     MAX_RESULTS_LIMIT,
@@ -385,7 +386,8 @@ TOOL_SCHEMAS = [
 ]
 
 
-def _dispatch(name: str, arguments: dict, sandbox_root: Path) -> dict[str, str | int]:
+def _dispatch(name: str, arguments: dict, ctx: AgentContext) -> dict[str, str | int]:
+    sandbox_root = ctx.sandbox_root
     if name == "list_files":
         result = list_files(sandbox_root, arguments.get("path", "."))
     elif name == "search_files":
@@ -444,8 +446,10 @@ def _dispatch(name: str, arguments: dict, sandbox_root: Path) -> dict[str, str |
     return result
 
 
-def execute_tool_result(name: str, arguments: dict, sandbox_root: Path) -> tuple[str, int]:
-    result = _dispatch(name, arguments, sandbox_root)
+def execute_tool_result(
+    name: str, arguments: dict, context: AgentContext | Path
+) -> tuple[str, int]:
+    result = _dispatch(name, arguments, as_context(context))
     exit_code = int(result["exit_code"])
     output = (str(result["stdout"]) + str(result["stderr"])).strip()
     if name == "run_command":
@@ -457,8 +461,8 @@ def execute_tool_result(name: str, arguments: dict, sandbox_root: Path) -> tuple
     return output or "(no output)", exit_code
 
 
-def execute_tool(name: str, arguments: dict, sandbox_root: Path) -> str:
-    return execute_tool_result(name, arguments, sandbox_root)[0]
+def execute_tool(name: str, arguments: dict, context: AgentContext | Path) -> str:
+    return execute_tool_result(name, arguments, context)[0]
 
 
 def save_session(messages: list[dict], path: Path) -> None:
