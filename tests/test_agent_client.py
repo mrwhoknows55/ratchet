@@ -179,3 +179,48 @@ def test_call_llm_env_vars_take_precedence_over_config(monkeypatch):
     result = agent_client.call_llm([{"role": "user", "content": "hi"}])
 
     assert result["model"] == "env-model"
+
+
+def test_call_llm_returns_usage_when_present(monkeypatch):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 120, "completion_tokens": 34, "total_tokens": 154},
+            },
+        )
+
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(handler))
+
+    result = agent_client.call_llm([{"role": "user", "content": "hi"}])
+
+    assert result["usage"] == {"prompt_tokens": 120, "completion_tokens": 34}
+
+
+def test_call_llm_omits_usage_when_provider_reports_none(monkeypatch):
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(handler))
+
+    result = agent_client.call_llm([{"role": "user", "content": "hi"}])
+
+    assert "usage" not in result
+
+
+def test_call_llm_usage_defaults_missing_counts_to_zero(monkeypatch):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"total_tokens": 9},
+            },
+        )
+
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(handler))
+
+    result = agent_client.call_llm([{"role": "user", "content": "hi"}])
+
+    assert result["usage"] == {"prompt_tokens": 0, "completion_tokens": 0}

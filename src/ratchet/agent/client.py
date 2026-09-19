@@ -44,6 +44,12 @@ def call_llm(
             tool_calls = message.get("tool_calls")
             if tool_calls:
                 result["tool_calls"] = tool_calls
+            usage = data.get("usage")
+            if usage:
+                result["usage"] = {
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                }
             return result
     except httpx.ConnectError:
         error_msg = (
