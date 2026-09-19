@@ -49,7 +49,7 @@ def run_turn(
 
     for step in range(1, max_steps + 1):
         if on_event:
-            on_event(TurnEvent(phase="thinking", step=step))
+            on_event(TurnEvent(phase="thinking", step=step, depth=depth, agent=agent))
         result = call_llm_fn(messages, override_config, tools=tools_schema)
 
         usage = result.get("usage")
@@ -97,6 +97,8 @@ def run_turn(
                         index=index,
                         name=tool_name,
                         arguments=arguments,
+                        depth=depth,
+                        agent=agent,
                     )
                 )
             call_started = time.monotonic()
@@ -112,6 +114,8 @@ def run_turn(
                         output=output,
                         exit_code=exit_code,
                         elapsed=time.monotonic() - call_started,
+                        depth=depth,
+                        agent=agent,
                     )
                 )
             messages.append(

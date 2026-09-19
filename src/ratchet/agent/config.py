@@ -18,6 +18,10 @@ DEFAULT_CONFIG = {
         "max_steps": 12,
         "command_timeout": 10,
     },
+    "subagent": {
+        "max_steps": 8,
+        "max_depth": 1,
+    },
 }
 
 

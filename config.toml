@@ -9,6 +9,16 @@ timeout = 40
 max_steps = 20
 command_timeout = 120
 
+[subagent]
+max_steps = 8
+max_depth = 1
+
+[subagent.models]
+researcher = ""
+coder = ""
+tester = ""
+generalist = ""
+
 [models.lmstudio]
 name = "qwen/qwen3-4b-2507"
 base_url = "http://localhost:1234/v1"

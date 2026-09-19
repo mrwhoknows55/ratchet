@@ -18,6 +18,11 @@ DEFAULT_AGENT_CONFIG = {
     "command_timeout": 10,
 }
 
+DEFAULT_SUBAGENT_CONFIG = {
+    "max_steps": 8,
+    "max_depth": 1,
+}
+
 
 @pytest.fixture(autouse=True)
 def _isolate_config_path(monkeypatch, tmp_path):
@@ -29,6 +34,7 @@ def test_load_config_returns_defaults_when_file_missing():
     assert agent_config.load_config() == {
         "model": DEFAULT_MODEL_CONFIG,
         "agent": DEFAULT_AGENT_CONFIG,
+        "subagent": DEFAULT_SUBAGENT_CONFIG,
     }
 
 
@@ -56,6 +62,7 @@ def test_load_config_returns_defaults_on_malformed_toml():
     assert agent_config.load_config() == {
         "model": DEFAULT_MODEL_CONFIG,
         "agent": DEFAULT_AGENT_CONFIG,
+        "subagent": DEFAULT_SUBAGENT_CONFIG,
     }
 
 
@@ -65,6 +72,7 @@ def test_load_config_returns_defaults_on_empty_file():
     assert agent_config.load_config() == {
         "model": DEFAULT_MODEL_CONFIG,
         "agent": DEFAULT_AGENT_CONFIG,
+        "subagent": DEFAULT_SUBAGENT_CONFIG,
     }
 
 
@@ -103,4 +111,5 @@ def test_load_config_handles_missing_env_file(monkeypatch, tmp_path):
     assert agent_config.load_config() == {
         "model": DEFAULT_MODEL_CONFIG,
         "agent": DEFAULT_AGENT_CONFIG,
+        "subagent": DEFAULT_SUBAGENT_CONFIG,
     }
