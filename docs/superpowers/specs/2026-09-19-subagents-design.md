@@ -41,13 +41,13 @@ This spec ports the idea, not the code.
 
 ```
 src/ratchet/agent/
-  context.py    AgentContext                      (new)
-  subagent.py   ROLE_TOOLS, role prompts,
-                spawn_subagent                    (new)
-  loop.py       run_agent_turn, TurnEvent,
-                TurnResult                        (replaces the echo stub)
+  context.py    AgentContext, as_context          (new)
+  events.py     TurnEvent, TurnResult             (new)
+  subagent.py   ROLE_TOOLS, schema_for_role,
+                prompt_for_role, spawn_subagent   (new)
+  loop.py       run_turn, run_agent_turn          (replaces the echo stub)
   tools.py      TOOL_SCHEMAS, _dispatch,
-                execute_tool_result, schema_for_role
+                execute_tool_result
   client.py     call_llm, now capturing usage
   config.py     [subagent] defaults
 prompts/
@@ -60,10 +60,16 @@ Moving `run_agent_turn` into `loop.py` completes what spec 2026-08-23 already
 specified and never landed. The existing `loop.py` echo stub and its four
 tests in `tests/test_agent_loop.py` are deleted, as that spec called for.
 
-Import cycle: `tools` needs `spawn_subagent`, `subagent` needs
-`run_agent_turn`, `loop` needs `_dispatch`. Broken with one function-level
-import of `run_agent_turn` inside `spawn_subagent`, the same place
-hydraharness breaks it.
+`TurnEvent` and `TurnResult` live in their own `events.py` rather than in
+`loop.py`, so `subagent.py` can build events without importing the loop at
+module level.
+
+Import cycle: `tools` needs `spawn_subagent`, `subagent` needs `run_turn`,
+`loop` needs `_dispatch`. Broken by importing both `spawn_subagent` (inside
+`_dispatch`) and `run_turn` (inside `spawn_subagent`) at function level.
+
+`schema_for_role` lives in `subagent.py`, next to the role table it filters
+by, rather than in `tools.py`.
 
 ### AgentContext
 
@@ -80,7 +86,12 @@ class AgentContext:
     depth: int = 0
 ```
 
-`run_agent_turn` builds one per turn. `_dispatch` takes it in place of
+`call_llm_fn` defaults to `None`, so a context can be built from a sandbox
+path alone. `execute_tool_result` and `execute_tool` accept either an
+`AgentContext` or a bare `Path`, normalizing through `as_context` — simple
+callers and the existing tool tests stay simple.
+
+`run_turn` builds one per turn. `_dispatch` takes it in place of
 `sandbox_root`; the sixteen existing tools read `ctx.sandbox_root` and ignore
 the rest. `spawn_subagent` reads all five fields. The edit is wide and
 mechanical — no tool changes behavior.
@@ -123,8 +134,10 @@ class TurnResult:
     completion_tokens: int | None = None
 ```
 
-`cli.py` and `tui/main.py` use `.text` where they used the return value
-directly. Two call sites.
+`run_turn` returns this. `run_agent_turn` stays as a one-line wrapper
+returning `.text`, so `cli.py`, `tui/main.py` and their tests are untouched —
+the metadata is only needed by `spawn_subagent`, which calls `run_turn`
+directly.
 
 ### Token capture
 
@@ -185,8 +198,11 @@ The token field is omitted when the provider reported no usage.
 | outcome | stdout | stderr | exit |
 |---|---|---|---|
 | finished | summary + metadata | empty | 0 |
-| budget exhausted | partial summary + metadata + "stopped at N steps" | empty | 1 |
+| budget exhausted | "stopped at N steps" + metadata | empty | 1 |
 | hard failure | empty | reason | 1 |
+
+A budget-exhausted subagent has no final answer to report, so the note stands
+alone rather than carrying a partial summary.
 
 The parent's history gains exactly one tool message. The nested turns are
 never serialized into it — the parent already watched them scroll past.
@@ -235,9 +251,11 @@ per-provider code, consistent with `call_llm` staying OpenAI-compatible.
 - `tests/test_agent_client.py`: usage captured when present, absent key
   tolerated.
 - `tests/test_agent_tools.py`: dispatch takes `AgentContext`; registry tests
-  otherwise unchanged. Loop tests move to `test_agent_loop.py`.
-- `tests/test_agent_loop.py`: delete the echo-stub tests; house the
-  `run_agent_turn` tests, updated for `TurnResult`.
+  otherwise unchanged. The existing loop tests are repointed at
+  `ratchet.agent.loop` in place rather than physically relocated — splitting
+  that file is file hygiene and gets its own commit.
+- `tests/test_agent_loop.py`: delete the echo-stub tests; house the new
+  `run_turn` tests.
 - `tests/test_tui_main.py`: `.text` instead of the bare return; depth
   indentation and agent label in the formatters.
 
@@ -254,6 +272,13 @@ Each step leaves the suite green.
 4. Add `depth` and `agent` to `TurnEvent`; indent in CLI and TUI.
 5. Role table and the four prompt files.
 6. `spawn_subagent`, its schema, and the `[subagent]` config.
+
+## Follow-ups
+
+`prompts/system.md` is left untouched: it sits 63 characters under the 2500
+limit its test enforces, so the paragraph telling the parent when to delegate
+needs that cap raised and belongs in its own commit. Until then the tool
+description is the only nudge toward delegation.
 
 ## What v2 needs
 
