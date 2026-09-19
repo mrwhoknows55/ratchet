@@ -1087,3 +1087,48 @@ def test_format_error_line_is_red():
     line = tui_main.format_error_line("[API Error] boom")
     assert "[red]" in line
     assert "! " in line
+
+
+def test_turn_event_defaults_to_depth_zero_and_no_agent():
+    event = tui_main.TurnEvent(phase="tool_start", step=1, name="list_files")
+    assert event.depth == 0
+    assert event.agent == ""
+
+
+def test_format_call_line_indents_and_tags_a_nested_call():
+    event = tui_main.TurnEvent(
+        phase="tool_start", step=1, index=2, name="read_files",
+        arguments={"path": "a.txt"}, depth=1, agent="researcher",
+    )
+    line = tui_main.format_call_line(event)
+    assert line.startswith("    ")
+    assert "[researcher]" in line
+    assert "read_files" in line
+
+
+def test_format_tool_line_indents_a_nested_result():
+    event = tui_main.TurnEvent(
+        phase="tool_done", step=1, name="read_files", output="hi", exit_code=0, depth=1,
+    )
+    assert tui_main.format_tool_line(event).startswith("        ")
+
+
+def test_format_log_line_records_the_agent_for_a_nested_call():
+    event = tui_main.TurnEvent(
+        phase="tool_done", step=1, name="read_files", output="hi", depth=1, agent="coder",
+    )
+    assert tui_main.format_log_line(event) == "tool: [coder] read_files -> hi"
+
+
+async def test_nested_events_render_as_plain_lines_not_panels(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        app._on_turn_event(
+            tui_main.TurnEvent(
+                phase="tool_done", step=1, index=1, name="read_files", output="hi",
+                exit_code=0, elapsed=0.1, depth=1, agent="researcher",
+            )
+        )
+        await pilot.pause()
+    log_text = (tmp_path / "ratchet.log").read_text()
+    assert "[researcher] read_files" in log_text

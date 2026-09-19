@@ -11,6 +11,8 @@ class TurnEvent:
     output: str = ""
     exit_code: int = 0
     elapsed: float = 0.0
+    depth: int = 0
+    agent: str = ""
 
 
 @dataclass

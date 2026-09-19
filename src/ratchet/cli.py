@@ -15,9 +15,11 @@ from ratchet.agent.tools import (
 )
 from ratchet.shell.executor import run_command
 from ratchet.tui.main import (
+    format_call_line,
     format_error_panel,
     format_prompt_panel,
     format_reply_panel,
+    format_tool_line,
     format_tool_panel,
 )
 from ratchet.tui.main import main as run_tui
@@ -47,9 +49,12 @@ def run_cli(
             if event.phase == "thinking":
                 return
             if event.phase == "tool_start":
-                console.print(f"[dim]→ running {escape(event.name)}...[/dim]")
+                if event.depth:
+                    console.print(format_call_line(event))
+                else:
+                    console.print(f"[dim]→ running {escape(event.name)}...[/dim]")
                 return
-            console.print(format_tool_panel(event))
+            console.print(format_tool_line(event) if event.depth else format_tool_panel(event))
 
         reply = run_agent_turn(call_llm, prompt, root, None, on_event, messages)
         save_session(messages, path)

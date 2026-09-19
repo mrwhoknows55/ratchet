@@ -124,3 +124,27 @@ def test_run_cli_shell_prints_output_and_exit_code(monkeypatch, tmp_path, capsys
     out = capsys.readouterr().out
     assert "a.txt" in out
     assert "exit 0" in out
+
+
+def test_run_cli_chat_indents_nested_subagent_calls(monkeypatch, tmp_path, capsys):
+    def fake_run_agent_turn(call_llm_fn, text, sandbox_root, override_config, on_event, messages):
+        on_event(
+            TurnEvent(
+                phase="tool_start", step=1, index=1, name="read_files",
+                arguments={"path": "a.txt"}, depth=1, agent="researcher",
+            )
+        )
+        on_event(
+            TurnEvent(
+                phase="tool_done", step=1, index=1, name="read_files", output="hi",
+                elapsed=0.2, depth=1, agent="researcher",
+            )
+        )
+        return "done"
+
+    monkeypatch.setattr(cli, "run_agent_turn", fake_run_agent_turn)
+    cli.run_cli("read a.txt", sandbox_root=tmp_path, session_path=tmp_path / "session.json")
+    lines = [line for line in capsys.readouterr().out.splitlines() if "read_files" in line]
+    assert lines
+    assert all(line.startswith("    ") for line in lines)
+    assert any("researcher" in line for line in lines)

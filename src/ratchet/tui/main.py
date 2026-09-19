@@ -61,18 +61,28 @@ def format_tool_args(name: str, arguments: dict) -> str:
     return ""
 
 
+def format_indent(event: TurnEvent) -> str:
+    return "    " * event.depth
+
+
+def format_agent_tag(event: TurnEvent) -> str:
+    return f"[dim]\\[{escape(event.agent)}][/dim] " if event.agent else ""
+
+
 def format_call_line(event: TurnEvent) -> str:
     args = escape(format_tool_args(event.name, event.arguments))
     name = escape(event.name)
     body = f"{name:<{NAME_WIDTH}} {args}".rstrip() if args else name
-    return f"  [dim]{event.index}[/dim] [dim]\u25b8[/dim] {body}"
+    tag = format_agent_tag(event)
+    return f"{format_indent(event)}  [dim]{event.index}[/dim] [dim]\u25b8[/dim] {tag}{body}"
 
 
 def format_tool_line(event: TurnEvent) -> str:
     summary = escape(summarize_output(event.output))
+    indent = f"{format_indent(event)}      "
     if event.exit_code != 0:
-        return f"      [red]\u2717 {event.elapsed:.1f}s \u00b7 {summary}[/red]"
-    return f"      [green]\u2713[/green] [dim]{event.elapsed:.1f}s \u00b7[/dim] {summary}"
+        return f"{indent}[red]\u2717 {event.elapsed:.1f}s \u00b7 {summary}[/red]"
+    return f"{indent}[green]\u2713[/green] [dim]{event.elapsed:.1f}s \u00b7[/dim] {summary}"
 
 
 def format_reply_line(reply: str) -> str:
@@ -99,13 +109,17 @@ def format_ack_panel(message: str) -> Panel:
     return Panel(f"[green]✓ {escape(message)}[/green]", border_style="green", expand=False)
 
 
+def _log_name(event: TurnEvent) -> str:
+    return f"[{event.agent}] {event.name}" if event.agent else event.name
+
+
 def format_log_line(event: TurnEvent) -> str:
-    return f"tool: {event.name} -> {event.output}"
+    return f"tool: {_log_name(event)} -> {event.output}"
 
 
 def format_call_log_line(event: TurnEvent) -> str:
     args = format_tool_args(event.name, event.arguments)
-    return f"tool: {event.name}({args})"
+    return f"tool: {_log_name(event)}({args})"
 
 
 def format_tool_panel(event: TurnEvent) -> Panel:
@@ -119,6 +133,14 @@ def format_tool_start_panel(event: TurnEvent) -> Panel:
     body = f"{format_call_line(event).strip()} [dim]… running[/dim]"
     title = f"{event.index} {escape(event.name)}"
     return Panel(body, title=title, border_style="yellow", expand=False)
+
+
+def _status_label(event: TurnEvent) -> str:
+    if event.phase == "thinking":
+        return f"{event.agent} thinking" if event.agent else "thinking"
+    if event.agent:
+        return f"{event.agent} \u00b7 {event.name}"
+    return f"running {event.name}"
 
 
 class StatusBar(Static):
@@ -255,6 +277,7 @@ class RatchetApp(App):
         self.sandbox_root = sandbox_root or (Path.cwd() / "sandbox")
         self.session_path = session_path or (log_path.parent / "session.json")
         self.selected_model: dict[str, str] | None = None
+        self._parent_step = 0
         self.messages: list[dict] = load_session(self.session_path) or [
             {"role": "system", "content": SYSTEM_PROMPT}
         ]
@@ -321,16 +344,23 @@ class RatchetApp(App):
     def _on_turn_event(self, event: TurnEvent) -> None:
         max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
         status = self.query_one("#status", StatusBar)
+        messages_widget = self.query_one("#messages", RichLog)
+        if event.depth == 0:
+            self._parent_step = event.step
         if event.phase == "thinking":
-            status.set_step(event.step, max_steps, "thinking")
+            status.set_step(self._parent_step, max_steps, _status_label(event))
             return
         if event.phase == "tool_start":
-            status.set_step(event.step, max_steps, f"running {event.name}")
-            self.query_one("#messages", RichLog).write(format_tool_start_panel(event))
+            status.set_step(self._parent_step, max_steps, _status_label(event))
+            messages_widget.write(
+                format_call_line(event) if event.depth else format_tool_start_panel(event)
+            )
             self._write_log(format_call_log_line(event))
             return
-        status.set_step(event.step, max_steps)
-        self.query_one("#messages", RichLog).write(format_tool_panel(event))
+        status.set_step(self._parent_step, max_steps)
+        messages_widget.write(
+            format_tool_line(event) if event.depth else format_tool_panel(event)
+        )
         self._write_log(format_log_line(event))
 
     def _write_log(self, message: str) -> None:
