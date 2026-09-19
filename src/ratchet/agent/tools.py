@@ -1,9 +1,6 @@
 import json
 import platform
-import time
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from ratchet.agent.config import load_config
 from ratchet.agent.context import AgentContext, as_context
@@ -32,20 +29,6 @@ from ratchet.shell.executor import (
     search_files,
     write_files,
 )
-
-DEFAULT_MAX_STEPS = 12
-
-
-@dataclass
-class TurnEvent:
-    phase: str
-    step: int
-    index: int = 0
-    name: str = ""
-    arguments: dict = field(default_factory=dict)
-    output: str = ""
-    exit_code: int = 0
-    elapsed: float = 0.0
 
 
 def _command_timeout() -> int:
@@ -481,68 +464,3 @@ def load_session(path: Path) -> list[dict] | None:
 
 def clear_session(path: Path) -> None:
     path.unlink(missing_ok=True)
-
-
-def run_agent_turn(
-    call_llm_fn: Callable,
-    user_text: str,
-    sandbox_root: Path,
-    override_config: dict | None = None,
-    on_event: Callable[[TurnEvent], None] | None = None,
-    messages: list[dict] | None = None,
-) -> str:
-    if messages is None:
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.append({"role": "user", "content": user_text})
-    max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
-    index = 0
-
-    for step in range(1, max_steps + 1):
-        if on_event:
-            on_event(TurnEvent(phase="thinking", step=step))
-        result = call_llm_fn(messages, override_config, tools=TOOL_SCHEMAS)
-        if result["status"] != "success":
-            return result["content"]
-
-        tool_calls = result.get("tool_calls") or []
-        if not tool_calls:
-            messages.append({"role": "assistant", "content": result["content"]})
-            return result["content"]
-
-        messages.append(
-            {"role": "assistant", "content": result.get("content") or "", "tool_calls": tool_calls}
-        )
-        for call in tool_calls:
-            tool_name = call["function"]["name"]
-            arguments = json.loads(call["function"]["arguments"] or "{}")
-            index += 1
-            if on_event:
-                on_event(
-                    TurnEvent(
-                        phase="tool_start",
-                        step=step,
-                        index=index,
-                        name=tool_name,
-                        arguments=arguments,
-                    )
-                )
-            started = time.monotonic()
-            output, exit_code = execute_tool_result(tool_name, arguments, sandbox_root)
-            if on_event:
-                on_event(
-                    TurnEvent(
-                        phase="tool_done",
-                        step=step,
-                        index=index,
-                        name=tool_name,
-                        arguments=arguments,
-                        output=output,
-                        exit_code=exit_code,
-                        elapsed=time.monotonic() - started,
-                    )
-                )
-            messages.append(
-                {"role": "tool", "tool_call_id": call["id"], "content": output}
-            )
-
-    return "[Error] tool call loop exceeded max iterations"

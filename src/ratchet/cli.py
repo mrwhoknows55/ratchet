@@ -5,12 +5,12 @@ from rich.console import Console
 from rich.markup import escape
 
 from ratchet.agent.client import call_llm
+from ratchet.agent.events import TurnEvent
+from ratchet.agent.loop import run_agent_turn
 from ratchet.agent.tools import (
     SYSTEM_PROMPT,
-    TurnEvent,
     clear_session,
     load_session,
-    run_agent_turn,
     save_session,
 )
 from ratchet.shell.executor import run_command

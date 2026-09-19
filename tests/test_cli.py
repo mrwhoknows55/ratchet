@@ -1,5 +1,5 @@
 from ratchet import cli
-from ratchet.agent.tools import TurnEvent
+from ratchet.agent.events import TurnEvent
 
 
 def test_main_with_no_args_runs_chat_mode(monkeypatch):

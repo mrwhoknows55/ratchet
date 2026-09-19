@@ -15,14 +15,13 @@ from textual.widgets.option_list import Option
 
 from ratchet.agent.client import call_llm
 from ratchet.agent.config import load_config
+from ratchet.agent.events import TurnEvent
+from ratchet.agent.loop import DEFAULT_MAX_STEPS, run_agent_turn
 from ratchet.agent.models import load_supported_models
 from ratchet.agent.tools import (
-    DEFAULT_MAX_STEPS,
     SYSTEM_PROMPT,
-    TurnEvent,
     clear_session,
     load_session,
-    run_agent_turn,
     save_session,
 )
 from ratchet.shell.executor import run_command

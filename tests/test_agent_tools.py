@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from ratchet.agent import config as agent_config
+from ratchet.agent import loop as agent_loop
 from ratchet.agent import tools as agent_tools
 from ratchet.agent.context import AgentContext
 
@@ -72,7 +73,7 @@ def test_run_agent_turn_returns_content_without_tool_call(tmp_path):
     def fake_call_llm(messages, override_config=None, tools=None):
         return {"content": "hello", "model": "test-model", "status": "success"}
 
-    reply = agent_tools.run_agent_turn(fake_call_llm, "hi", tmp_path)
+    reply = agent_loop.run_agent_turn(fake_call_llm, "hi", tmp_path)
 
     assert reply == "hello"
 
@@ -81,7 +82,7 @@ def test_run_agent_turn_short_circuits_on_non_success(tmp_path):
     def fake_call_llm(messages, override_config=None, tools=None):
         return {"content": "[LM Studio Offline] ...", "model": "test-model", "status": "offline"}
 
-    reply = agent_tools.run_agent_turn(fake_call_llm, "hi", tmp_path)
+    reply = agent_loop.run_agent_turn(fake_call_llm, "hi", tmp_path)
 
     assert reply == "[LM Studio Offline] ..."
 
@@ -91,7 +92,7 @@ def test_run_agent_turn_appends_reply_to_passed_in_messages(tmp_path):
         return {"content": "hello", "model": "test-model", "status": "success"}
 
     history = [{"role": "system", "content": "sys"}]
-    reply = agent_tools.run_agent_turn(fake_call_llm, "hi", tmp_path, messages=history)
+    reply = agent_loop.run_agent_turn(fake_call_llm, "hi", tmp_path, messages=history)
 
     assert reply == "hello"
     assert history[-2] == {"role": "user", "content": "hi"}
@@ -106,8 +107,8 @@ def test_run_agent_turn_remembers_earlier_turns(tmp_path):
         return {"content": "ack", "model": "test-model", "status": "success"}
 
     history = [{"role": "system", "content": "sys"}]
-    agent_tools.run_agent_turn(fake_call_llm, "first", tmp_path, messages=history)
-    agent_tools.run_agent_turn(fake_call_llm, "second", tmp_path, messages=history)
+    agent_loop.run_agent_turn(fake_call_llm, "first", tmp_path, messages=history)
+    agent_loop.run_agent_turn(fake_call_llm, "second", tmp_path, messages=history)
 
     second_turn_messages = calls[1]
     assert {"role": "user", "content": "first"} in second_turn_messages
@@ -185,7 +186,7 @@ def test_run_agent_turn_executes_tool_call_and_returns_final_reply(tmp_path):
             }
         return {"content": "there is a.txt", "model": "test-model", "status": "success"}
 
-    reply = agent_tools.run_agent_turn(fake_call_llm, "what files exist?", tmp_path)
+    reply = agent_loop.run_agent_turn(fake_call_llm, "what files exist?", tmp_path)
 
     assert reply == "there is a.txt"
     assert len(calls) == 2
@@ -217,7 +218,7 @@ def test_run_agent_turn_notifies_around_each_tool_call(tmp_path):
             }
         return {"content": "there is a.txt", "model": "test-model", "status": "success"}
 
-    agent_tools.run_agent_turn(
+    agent_loop.run_agent_turn(
         fake_call_llm, "what files exist?", tmp_path, on_event=notifications.append
     )
 
@@ -250,7 +251,7 @@ def test_run_agent_turn_without_on_event_does_not_error(tmp_path):
             }
         return {"content": "there is a.txt", "model": "test-model", "status": "success"}
 
-    reply = agent_tools.run_agent_turn(fake_call_llm, "what files exist?", tmp_path)
+    reply = agent_loop.run_agent_turn(fake_call_llm, "what files exist?", tmp_path)
 
     assert reply == "there is a.txt"
 
@@ -270,7 +271,7 @@ def test_run_agent_turn_stops_after_max_iterations(tmp_path):
             ],
         }
 
-    reply = agent_tools.run_agent_turn(fake_call_llm, "hi", tmp_path)
+    reply = agent_loop.run_agent_turn(fake_call_llm, "hi", tmp_path)
 
     assert "exceeded" in reply.lower()
 
@@ -282,7 +283,7 @@ def test_run_agent_turn_passes_override_config_through(tmp_path):
         seen.append(override_config)
         return {"content": "ok", "model": "test-model", "status": "success"}
 
-    agent_tools.run_agent_turn(
+    agent_loop.run_agent_turn(
         fake_call_llm, "hi", tmp_path, override_config={"model": {"name": "x"}}
     )
 
@@ -318,7 +319,7 @@ def test_run_agent_turn_reads_max_steps_from_config(monkeypatch, tmp_path):
     _use_config(monkeypatch, tmp_path, '[model]\nname = "test-model"\n\n[agent]\nmax_steps = 3\n')
     calls = []
 
-    reply = agent_tools.run_agent_turn(_tool_call_forever(calls), "hi", tmp_path)
+    reply = agent_loop.run_agent_turn(_tool_call_forever(calls), "hi", tmp_path)
 
     assert len(calls) == 3
     assert "exceeded" in reply.lower()
@@ -330,13 +331,13 @@ def test_run_agent_turn_falls_back_to_default_max_steps_without_agent_section(
     _use_config(monkeypatch, tmp_path, '[model]\nname = "test-model"\n')
     calls = []
 
-    agent_tools.run_agent_turn(_tool_call_forever(calls), "hi", tmp_path)
+    agent_loop.run_agent_turn(_tool_call_forever(calls), "hi", tmp_path)
 
-    assert len(calls) == agent_tools.DEFAULT_MAX_STEPS
+    assert len(calls) == agent_loop.DEFAULT_MAX_STEPS
 
 
 def test_default_max_steps_is_twelve():
-    assert agent_tools.DEFAULT_MAX_STEPS == 12
+    assert agent_loop.DEFAULT_MAX_STEPS == 12
     assert agent_config.DEFAULT_CONFIG["agent"]["max_steps"] == 12
 
 
@@ -398,7 +399,7 @@ def test_system_prompt_leads_the_conversation(tmp_path):
         calls.append(messages)
         return {"content": "ok", "model": "test-model", "status": "success"}
 
-    agent_tools.run_agent_turn(fake_call_llm, "do a thing", tmp_path)
+    agent_loop.run_agent_turn(fake_call_llm, "do a thing", tmp_path)
 
     assert calls[0][0] == {"role": "system", "content": agent_tools.SYSTEM_PROMPT}
     assert calls[0][1] == {"role": "user", "content": "do a thing"}
@@ -714,7 +715,7 @@ def _tool_turn_events(tmp_path):
             }
         return {"content": "done", "model": "test-model", "status": "success"}
 
-    agent_tools.run_agent_turn(
+    agent_loop.run_agent_turn(
         fake_call_llm, "what files exist?", tmp_path, on_event=events.append
     )
     return events
@@ -764,7 +765,7 @@ def test_run_agent_turn_reports_a_failing_tool_exit_code(tmp_path):
             }
         return {"content": "done", "model": "test-model", "status": "success"}
 
-    agent_tools.run_agent_turn(fake_call_llm, "read it", tmp_path, on_event=events.append)
+    agent_loop.run_agent_turn(fake_call_llm, "read it", tmp_path, on_event=events.append)
 
     done = [e for e in events if e.phase == "tool_done"][0]
     assert done.exit_code == 1
@@ -792,7 +793,7 @@ def test_run_agent_turn_start_event_carries_the_arguments(tmp_path):
             }
         return {"content": "done", "model": "test-model", "status": "success"}
 
-    agent_tools.run_agent_turn(fake_call_llm, "read it", tmp_path, on_event=events.append)
+    agent_loop.run_agent_turn(fake_call_llm, "read it", tmp_path, on_event=events.append)
 
     start = [e for e in events if e.phase == "tool_start"][0]
     assert start.arguments == {"path": "a.txt"}
@@ -819,7 +820,7 @@ def test_run_agent_turn_numbers_tool_calls_across_rounds(tmp_path):
             }
         return {"content": "done", "model": "test-model", "status": "success"}
 
-    agent_tools.run_agent_turn(fake_call_llm, "look twice", tmp_path, on_event=events.append)
+    agent_loop.run_agent_turn(fake_call_llm, "look twice", tmp_path, on_event=events.append)
 
     indexes = [e.index for e in events if e.phase == "tool_done"]
     assert indexes == [1, 2]
@@ -844,7 +845,7 @@ def test_run_agent_turn_numbers_parallel_tool_calls_in_one_round(tmp_path):
             }
         return {"content": "done", "model": "test-model", "status": "success"}
 
-    agent_tools.run_agent_turn(fake_call_llm, "look", tmp_path, on_event=events.append)
+    agent_loop.run_agent_turn(fake_call_llm, "look", tmp_path, on_event=events.append)
 
     assert [e.index for e in events if e.phase == "tool_start"] == [1, 2]
 
