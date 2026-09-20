@@ -18,6 +18,7 @@ from ratchet.agent.config import load_config
 from ratchet.agent.events import TurnEvent
 from ratchet.agent.loop import DEFAULT_MAX_STEPS, run_agent_turn
 from ratchet.agent.models import load_supported_models
+from ratchet.agent.subagent import normalize_role
 from ratchet.agent.tools import (
     SYSTEM_PROMPT,
     clear_session,
@@ -30,7 +31,14 @@ DEFAULT_LOG_PATH = Path("log/ratchet.log")
 SUMMARY_WIDTH = 100
 ARGS_WIDTH = 80
 NAME_WIDTH = 14
-ARG_KEYS = ("command", "query", "url", "path", "pattern")
+ARG_KEYS = ("command", "query", "url", "path", "pattern", "task")
+SPAWN_TOOL = "spawn_subagent"
+ROLE_COLOURS = {
+    "researcher": "cyan",
+    "coder": "yellow",
+    "tester": "magenta",
+    "generalist": "white",
+}
 
 
 def summarize_output(output: str) -> str:
@@ -65,16 +73,15 @@ def format_indent(event: TurnEvent) -> str:
     return "    " * event.depth
 
 
-def format_agent_tag(event: TurnEvent) -> str:
-    return f"[dim]\\[{escape(event.agent)}][/dim] " if event.agent else ""
-
-
 def format_call_line(event: TurnEvent) -> str:
     args = escape(format_tool_args(event.name, event.arguments))
     name = escape(event.name)
     body = f"{name:<{NAME_WIDTH}} {args}".rstrip() if args else name
-    tag = format_agent_tag(event)
-    return f"{format_indent(event)}  [dim]{event.index}[/dim] [dim]\u25b8[/dim] {tag}{body}"
+    return f"{format_indent(event)}  [dim]{event.index}[/dim] [dim]\u25b8[/dim] {body}"
+
+
+def format_call_start_line(event: TurnEvent) -> str:
+    return f"{format_call_line(event)} [dim]\u2026 running[/dim]"
 
 
 def format_tool_line(event: TurnEvent) -> str:
@@ -83,6 +90,48 @@ def format_tool_line(event: TurnEvent) -> str:
     if event.exit_code != 0:
         return f"{indent}[red]\u2717 {event.elapsed:.1f}s \u00b7 {summary}[/red]"
     return f"{indent}[green]\u2713[/green] [dim]{event.elapsed:.1f}s \u00b7[/dim] {summary}"
+
+
+def role_colour(role: str) -> str:
+    return ROLE_COLOURS.get(role, ROLE_COLOURS["generalist"])
+
+
+def format_delegation_header(event: TurnEvent) -> str:
+    role = normalize_role(str(event.arguments.get("role", "")))
+    colour = role_colour(role)
+    head = (
+        f"{format_indent(event)}  [dim]{event.index}[/dim] [dim]\u25b8[/dim] "
+        f"{escape(event.name):<{NAME_WIDTH}} [{colour}]{role}[/{colour}] [dim]\u2026 running[/dim]"
+    )
+    task = _truncate(str(event.arguments.get("task", "")).strip(), ARGS_WIDTH)
+    if not task:
+        return head
+    return f"{head}\n{format_indent(event)}      [dim]task[/dim]  {escape(task)}"
+
+
+def split_subagent_output(output: str) -> tuple[str, list[str]]:
+    lines = output.rstrip().splitlines()
+    if not lines or not (lines[-1].startswith("[") and lines[-1].endswith("]")):
+        return output.strip(), []
+    parts = [p.strip() for p in lines[-1][1:-1].split("\u00b7")]
+    shown = [p for p in parts[1:] if not p.startswith("via ")]
+    return "\n".join(lines[:-1]).strip(), shown
+
+
+def format_delegation_footer(event: TurnEvent) -> str:
+    role = normalize_role(str(event.arguments.get("role", "")))
+    colour = role_colour(role)
+    summary, parts = split_subagent_output(event.output)
+    indent = f"{format_indent(event)}  "
+    if event.exit_code == 0:
+        state = "[green]\u2713 done[/green]"
+    else:
+        state = "[red]\u2717 failed[/red]"
+    meta = " \u00b7 ".join(parts) or f"{event.elapsed:.1f}s"
+    lines = [f"{indent}{state} [{colour}]\u00b7 {escape(meta)}[/{colour}]"]
+    if summary:
+        lines.append(f"{indent}[dim]\u25c6[/dim] {escape(summary)}")
+    return "\n".join(lines)
 
 
 def format_reply_line(reply: str) -> str:
@@ -352,15 +401,21 @@ class RatchetApp(App):
             return
         if event.phase == "tool_start":
             status.set_step(self._parent_step, max_steps, _status_label(event))
-            messages_widget.write(
-                format_call_line(event) if event.depth else format_tool_start_panel(event)
-            )
+            if event.name == SPAWN_TOOL and not event.depth:
+                messages_widget.write(format_delegation_header(event))
+            elif event.depth:
+                messages_widget.write(format_call_start_line(event))
+            else:
+                messages_widget.write(format_tool_start_panel(event))
             self._write_log(format_call_log_line(event))
             return
         status.set_step(self._parent_step, max_steps)
-        messages_widget.write(
-            format_tool_line(event) if event.depth else format_tool_panel(event)
-        )
+        if event.name == SPAWN_TOOL and not event.depth:
+            messages_widget.write(format_delegation_footer(event))
+        elif event.depth:
+            messages_widget.write(format_tool_line(event))
+        else:
+            messages_widget.write(format_tool_panel(event))
         self._write_log(format_log_line(event))
 
     def _write_log(self, message: str) -> None:

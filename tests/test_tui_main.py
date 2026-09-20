@@ -1095,17 +1095,6 @@ def test_turn_event_defaults_to_depth_zero_and_no_agent():
     assert event.agent == ""
 
 
-def test_format_call_line_indents_and_tags_a_nested_call():
-    event = tui_main.TurnEvent(
-        phase="tool_start", step=1, index=2, name="read_files",
-        arguments={"path": "a.txt"}, depth=1, agent="researcher",
-    )
-    line = tui_main.format_call_line(event)
-    assert line.startswith("    ")
-    assert "[researcher]" in line
-    assert "read_files" in line
-
-
 def test_format_tool_line_indents_a_nested_result():
     event = tui_main.TurnEvent(
         phase="tool_done", step=1, name="read_files", output="hi", exit_code=0, depth=1,
@@ -1132,3 +1121,123 @@ async def test_nested_events_render_as_plain_lines_not_panels(tmp_path):
         await pilot.pause()
     log_text = (tmp_path / "ratchet.log").read_text()
     assert "[researcher] read_files" in log_text
+
+
+def _spawn_event(
+    phase, output="", exit_code=0, role="researcher", task="which file mentions retry"
+):
+    return tui_main.TurnEvent(
+        phase=phase, step=3, index=3, name="spawn_subagent",
+        arguments={"task": task, "role": role}, output=output, exit_code=exit_code, elapsed=4.1,
+    )
+
+
+def test_delegation_header_names_the_role_and_the_task():
+    line = tui_main.format_delegation_header(_spawn_event("tool_start"))
+    assert "spawn_subagent" in line
+    assert "researcher" in line
+    assert "which file mentions retry" in line
+    assert "running" in line
+
+
+def test_delegation_header_colours_each_role_differently():
+    researcher = tui_main.format_delegation_header(_spawn_event("tool_start", role="researcher"))
+    coder = tui_main.format_delegation_header(_spawn_event("tool_start", role="coder"))
+    assert "cyan" in researcher
+    assert "yellow" in coder
+
+
+def test_delegation_header_falls_back_to_generalist_for_a_missing_role():
+    event = tui_main.TurnEvent(
+        phase="tool_start", step=1, index=1, name="spawn_subagent", arguments={"task": "go"},
+    )
+    assert "generalist" in tui_main.format_delegation_header(event)
+
+
+def test_split_subagent_output_separates_summary_from_metadata():
+    output = (
+        "notes.txt mentions retry at line 12\n"
+        "[researcher · 4.1s · 3/8 steps · 360 tok · via read_files]"
+    )
+    summary, parts = tui_main.split_subagent_output(output)
+    assert summary == "notes.txt mentions retry at line 12"
+    assert parts == ["4.1s", "3/8 steps", "360 tok"]
+
+
+def test_split_subagent_output_handles_output_without_metadata():
+    summary, parts = tui_main.split_subagent_output("just a summary")
+    assert summary == "just a summary"
+    assert parts == []
+
+
+def test_delegation_footer_shows_the_summary_and_the_metadata():
+    output = (
+        "notes.txt mentions retry at line 12\n"
+        "[researcher · 4.1s · 3/8 steps · 360 tok · via read_files]"
+    )
+    footer = tui_main.format_delegation_footer(_spawn_event("tool_done", output=output))
+    assert "notes.txt mentions retry at line 12" in footer
+    assert "done" in footer
+    assert "3/8 steps" in footer
+    assert "360 tok" in footer
+    assert "read_files" not in footer
+
+
+def test_delegation_footer_marks_a_failed_delegation():
+    output = "Subagent stopped at 8 steps without finishing.\n[researcher · 9.0s · 8/8 steps]"
+    footer = tui_main.format_delegation_footer(
+        _spawn_event("tool_done", output=output, exit_code=1)
+    )
+    assert "✗" in footer
+    assert "failed" in footer
+    assert "stopped at 8 steps" in footer
+
+
+def test_nested_call_line_no_longer_repeats_the_role_tag():
+    event = tui_main.TurnEvent(
+        phase="tool_start", step=1, index=2, name="read_files",
+        arguments={"path": "a.txt"}, depth=1, agent="researcher",
+    )
+    line = tui_main.format_call_line(event)
+    assert line.startswith("    ")
+    assert "researcher" not in line
+
+
+def test_call_log_line_records_the_delegated_task():
+    line = tui_main.format_call_log_line(_spawn_event("tool_start"))
+    assert "which file mentions retry" in line
+
+
+async def test_app_writes_a_delegation_header_and_footer(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        app._on_turn_event(_spawn_event("tool_start"))
+        app._on_turn_event(
+            _spawn_event(
+                "tool_done",
+                output="found it\n[researcher · 4.1s · 3/8 steps · 360 tok · via read_files]",
+            )
+        )
+        await pilot.pause()
+    log_text = (tmp_path / "ratchet.log").read_text()
+    assert "spawn_subagent" in log_text
+    assert "which file mentions retry" in log_text
+
+
+def test_call_start_line_marks_a_nested_tool_as_running():
+    event = tui_main.TurnEvent(
+        phase="tool_start", step=1, index=2, name="read_files",
+        arguments={"path": "a.txt"}, depth=1, agent="researcher",
+    )
+    line = tui_main.format_call_start_line(event)
+    assert "read_files" in line
+    assert "running" in line
+
+
+def test_tool_panel_for_a_finished_call_does_not_say_running():
+    event = tui_main.TurnEvent(
+        phase="tool_done", step=1, index=1, name="list_files", output="a.txt",
+        exit_code=0, elapsed=0.1,
+    )
+    panel = tui_main.format_tool_panel(event)
+    assert "running" not in str(panel.renderable)

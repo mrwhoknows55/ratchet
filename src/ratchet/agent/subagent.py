@@ -42,6 +42,11 @@ ROLE_TOOLS = {
 }
 
 
+def normalize_role(role: str) -> str:
+    name = (role or "").strip().lower()
+    return name if name in ROLE_TOOLS else DEFAULT_ROLE
+
+
 def schema_for_role(role: str) -> list[dict]:
     allowed = set(ROLE_TOOLS.get(role, ROLE_TOOLS[DEFAULT_ROLE]))
     return [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed]
@@ -69,11 +74,11 @@ def _error(message: str) -> dict[str, str | int]:
 
 
 def _metadata_line(role: str, result: TurnResult, budget: int) -> str:
-    parts = [role, f"{result.steps}/{budget} steps", f"{result.elapsed:.1f}s"]
+    parts = [role, f"{result.elapsed:.1f}s", f"{result.steps}/{budget} steps"]
     if result.prompt_tokens is not None:
         parts.append(f"{result.prompt_tokens + (result.completion_tokens or 0)} tok")
     if result.tools_used:
-        parts.append(", ".join(dict.fromkeys(result.tools_used)))
+        parts.append("via " + ", ".join(dict.fromkeys(result.tools_used)))
     return "[" + " \u00b7 ".join(parts) + "]"
 
 
@@ -96,9 +101,7 @@ def spawn_subagent(
     if ctx.call_llm_fn is None:
         return _error("Error: no LLM client is available to run a subagent.")
 
-    role_name = (role or "").strip().lower()
-    if role_name not in ROLE_TOOLS:
-        role_name = DEFAULT_ROLE
+    role_name = normalize_role(role)
 
     budget = int(_subagent_config().get("max_steps", DEFAULT_MAX_STEPS))
     if max_steps:

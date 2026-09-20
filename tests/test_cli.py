@@ -147,4 +147,31 @@ def test_run_cli_chat_indents_nested_subagent_calls(monkeypatch, tmp_path, capsy
     lines = [line for line in capsys.readouterr().out.splitlines() if "read_files" in line]
     assert lines
     assert all(line.startswith("    ") for line in lines)
-    assert any("researcher" in line for line in lines)
+    assert any("running" in line for line in lines)
+
+
+def test_run_cli_chat_frames_a_delegation_with_a_header_and_footer(monkeypatch, tmp_path, capsys):
+    output = "notes.txt mentions retry\n[researcher · 4.1s · 3/8 steps · 360 tok · via read_files]"
+
+    def fake_run_agent_turn(call_llm_fn, text, sandbox_root, override_config, on_event, messages):
+        args = {"task": "which file mentions retry", "role": "researcher"}
+        on_event(
+            TurnEvent(phase="tool_start", step=1, index=1, name="spawn_subagent", arguments=args)
+        )
+        on_event(
+            TurnEvent(
+                phase="tool_done", step=1, index=1, name="spawn_subagent", arguments=args,
+                output=output, exit_code=0, elapsed=4.1,
+            )
+        )
+        return "done"
+
+    monkeypatch.setattr(cli, "run_agent_turn", fake_run_agent_turn)
+    cli.run_cli("find retry", sandbox_root=tmp_path, session_path=tmp_path / "session.json")
+    out = capsys.readouterr().out
+    assert "researcher" in out
+    assert "which file mentions retry" in out
+    assert "running" in out
+    assert "done" in out
+    assert "3/8 steps" in out
+    assert "notes.txt mentions retry" in out
