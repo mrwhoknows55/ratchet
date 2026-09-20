@@ -29,9 +29,19 @@ from ratchet.shell.executor import run_command
 
 DEFAULT_LOG_PATH = Path("log/ratchet.log")
 SUMMARY_WIDTH = 100
+PREVIEW_LINES = 3
+PREVIEW_WIDTH = 88
+RESULT_UNITS = {
+    "list_files": "entries",
+    "file_search": "files",
+    "search_files": "matches",
+    "search_web": "results",
+}
+_SINGULAR = {"entries": "entry", "files": "file", "matches": "match", "results": "result",
+             "lines": "line"}
 ARGS_WIDTH = 80
 NAME_WIDTH = 14
-ARG_KEYS = ("command", "query", "url", "path", "pattern", "task")
+ARG_KEYS = ("command", "query", "url", "path", "pattern", "task", "name")
 SPAWN_TOOL = "spawn_subagent"
 ROLE_COLOURS = {
     "researcher": "cyan",
@@ -62,11 +72,62 @@ def format_tool_args(name: str, arguments: dict) -> str:
     destination = arguments.get("destination")
     if source and destination:
         return _truncate(f"{source} \u2192 {destination}", ARGS_WIDTH)
+    if name in ("search_files", "file_search"):
+        scope = str(arguments.get("path") or "").strip()
+        pattern = f'"{arguments.get("pattern", "")}"'
+        if scope and scope != ".":
+            pattern += f" in {scope}"
+        return _truncate(pattern, ARGS_WIDTH)
+    if name == "read_file_range":
+        start = arguments.get("start_line", 1)
+        end = arguments.get("end_line")
+        span = f"{start}-{end}" if end else f"from {start}"
+        return _truncate(f"{arguments.get('path', '')} {span}".strip(), ARGS_WIDTH)
+    if name in ("write_files", "append_file"):
+        size = len(str(arguments.get("content", "")))
+        return _truncate(f"{arguments.get('path', '')} ({size} B)", ARGS_WIDTH)
+    if name == "delete_file":
+        path = str(arguments.get("path", ""))
+        return _truncate(f"{path} (recursive)" if arguments.get("recursive") else path, ARGS_WIDTH)
+    if name == "search_web":
+        query = f'"{arguments.get("query", "")}"'
+        count = arguments.get("max_results")
+        return _truncate(f"{query} \u00d7{count}" if count else query, ARGS_WIDTH)
     for key in ARG_KEYS:
         value = arguments.get(key)
         if value:
             return _truncate(str(value), ARGS_WIDTH)
     return ""
+
+
+def _count_results(name: str, text: str) -> int:
+    if name == "search_web":
+        return len([block for block in text.split("\n\n") if block.strip()])
+    return len(text.splitlines())
+
+
+def summarize_result(name: str, output: str) -> str:
+    text = output.strip()
+    if not text:
+        return "(no output)"
+    lines = text.splitlines()
+    if len(lines) == 1:
+        return _truncate(text, SUMMARY_WIDTH)
+    unit = RESULT_UNITS.get(name, "lines")
+    count = _count_results(name, text)
+    if count == 1:
+        unit = _SINGULAR.get(unit, unit)
+    return f"{count} {unit}"
+
+
+def output_preview_lines(output: str) -> list[str]:
+    lines = output.strip().splitlines()
+    if len(lines) <= 1:
+        return []
+    shown = [_truncate(line.rstrip(), PREVIEW_WIDTH) for line in lines[:PREVIEW_LINES]]
+    if len(lines) > PREVIEW_LINES:
+        shown.append(f"\u2026 {len(lines) - PREVIEW_LINES} more")
+    return shown
 
 
 def format_indent(event: TurnEvent) -> str:
@@ -85,7 +146,7 @@ def format_call_start_line(event: TurnEvent) -> str:
 
 
 def format_tool_line(event: TurnEvent) -> str:
-    summary = escape(summarize_output(event.output))
+    summary = escape(summarize_result(event.name, event.output))
     indent = f"{format_indent(event)}      "
     if event.exit_code != 0:
         return f"{indent}[red]\u2717 {event.elapsed:.1f}s \u00b7 {summary}[/red]"
@@ -134,6 +195,13 @@ def format_delegation_footer(event: TurnEvent) -> str:
     return "\n".join(lines)
 
 
+def format_tool_result_block(event: TurnEvent) -> str:
+    lines = [format_tool_line(event)]
+    indent = f"{format_indent(event)}        "
+    lines += [f"{indent}[dim]{escape(line)}[/dim]" for line in output_preview_lines(event.output)]
+    return "\n".join(lines)
+
+
 def format_reply_line(reply: str) -> str:
     return f"[dim]\u25c6[/dim] {escape(reply)}"
 
@@ -172,7 +240,9 @@ def format_call_log_line(event: TurnEvent) -> str:
 
 
 def format_tool_panel(event: TurnEvent) -> Panel:
-    body = f"{format_call_line(event).strip()}\n{format_tool_line(event).strip()}"
+    rows = [format_call_line(event).strip(), format_tool_line(event).strip()]
+    rows += [f"  [dim]{escape(line)}[/dim]" for line in output_preview_lines(event.output)]
+    body = "\n".join(rows)
     border_style = "red" if event.exit_code != 0 else "green"
     title = f"{event.index} {escape(event.name)}"
     return Panel(body, title=title, border_style=border_style, expand=False)
@@ -413,7 +483,7 @@ class RatchetApp(App):
         if event.name == SPAWN_TOOL and not event.depth:
             messages_widget.write(format_delegation_footer(event))
         elif event.depth:
-            messages_widget.write(format_tool_line(event))
+            messages_widget.write(format_tool_result_block(event))
         else:
             messages_widget.write(format_tool_panel(event))
         self._write_log(format_log_line(event))

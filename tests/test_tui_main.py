@@ -934,7 +934,7 @@ def test_format_tool_args_uses_the_command_for_run_command():
 
 
 def test_format_tool_args_uses_the_query_for_search_web():
-    assert tui_main.format_tool_args("search_web", {"query": "asyncio"}) == "asyncio"
+    assert tui_main.format_tool_args("search_web", {"query": "asyncio"}) == '"asyncio"' 
 
 
 def test_format_tool_args_shows_source_and_destination():
@@ -1008,7 +1008,8 @@ async def test_transcript_keeps_the_call_line_and_the_result(tmp_path, monkeypat
 
     assert any("read_files" in line and "a.txt" in line for line in lines)
     assert any("✓" in line and "4 lines" in line for line in lines)
-    assert not any("1| one" in line for line in lines)
+    assert any("1| one" in line for line in lines)
+    assert any("… 1 more" in line for line in lines)
 
 
 async def test_call_line_is_logged_with_its_arguments(tmp_path, monkeypatch):
@@ -1241,3 +1242,111 @@ def test_tool_panel_for_a_finished_call_does_not_say_running():
     )
     panel = tui_main.format_tool_panel(event)
     assert "running" not in str(panel.renderable)
+
+
+def _done(name, output, **kwargs):
+    return tui_main.TurnEvent(
+        phase="tool_done", step=1, index=1, name=name, output=output,
+        exit_code=kwargs.pop("exit_code", 0), elapsed=0.1, **kwargs,
+    )
+
+
+def test_summarize_result_counts_entries_for_list_files():
+    output = "a.txt (5 bytes)\nsub/\nb.txt (9 bytes)"
+    assert tui_main.summarize_result("list_files", output) == "3 entries"
+
+
+def test_summarize_result_counts_matches_for_search_files():
+    output = "./a.py:1:retry\n./b.py:4:retry"
+    assert tui_main.summarize_result("search_files", output) == "2 matches"
+
+
+def test_summarize_result_counts_blocks_for_search_web():
+    output = "1. one\n   url\n\n2. two\n   url\n\n3. three\n   url"
+    assert tui_main.summarize_result("search_web", output) == "3 results"
+
+
+def test_summarize_result_singularises_a_single_item():
+    assert tui_main.summarize_result("file_search", "a.py\nb.py") == "2 files"
+    assert tui_main.summarize_result("read_files", "1| a\n2| b") == "2 lines"
+
+
+def test_summarize_result_shows_a_single_line_verbatim():
+    assert tui_main.summarize_result("file_search", "No files matching '*.x'") == (
+        "No files matching '*.x'"
+    )
+    assert tui_main.summarize_result("write_files", "Wrote 240 bytes to 'a.txt'") == (
+        "Wrote 240 bytes to 'a.txt'"
+    )
+
+
+def test_summarize_result_handles_empty_output():
+    assert tui_main.summarize_result("search_files", "") == "(no output)"
+
+
+def test_output_preview_caps_at_three_lines_and_counts_the_rest():
+    lines = tui_main.output_preview_lines("one\ntwo\nthree\nfour\nfive")
+    assert lines == ["one", "two", "three", "… 2 more"]
+
+
+def test_output_preview_is_empty_for_a_single_line():
+    assert tui_main.output_preview_lines("just one") == []
+
+
+def test_output_preview_truncates_a_very_long_line():
+    lines = tui_main.output_preview_lines("x" * 300 + "\nsecond")
+    assert len(lines[0]) <= tui_main.PREVIEW_WIDTH
+
+
+def test_tool_line_uses_the_semantic_unit():
+    line = tui_main.format_tool_line(_done("list_files", "a.txt\nsub/\nb.txt"))
+    assert "3 entries" in line
+
+
+def test_nested_result_block_carries_the_preview():
+    block = tui_main.format_tool_result_block(_done("read_files", "1| a\n2| b\n3| c", depth=1))
+    assert "3 lines" in block
+    assert "1| a" in block
+    assert block.count("\n") == 3
+
+
+def test_tool_panel_includes_the_output_preview():
+    panel = tui_main.format_tool_panel(_done("read_files", "1| a\n2| b\n3| c"))
+    body = str(panel.renderable)
+    assert "3 lines" in body
+    assert "2| b" in body
+
+
+def test_tool_args_show_pattern_and_scope_for_a_search():
+    args = tui_main.format_tool_args("search_files", {"pattern": "retry", "path": "src"})
+    assert args == '"retry" in src'
+
+
+def test_tool_args_omit_the_scope_when_searching_the_root():
+    assert tui_main.format_tool_args("file_search", {"pattern": "*.py", "path": "."}) == '"*.py"'
+
+
+def test_tool_args_show_the_line_span_for_a_ranged_read():
+    args = tui_main.format_tool_args(
+        "read_file_range", {"path": "a.py", "start_line": 10, "end_line": 40}
+    )
+    assert args == "a.py 10-40"
+
+
+def test_tool_args_show_the_payload_size_for_a_write():
+    args = tui_main.format_tool_args("write_files", {"path": "a.txt", "content": "x" * 240})
+    assert args == "a.txt (240 B)"
+
+
+def test_tool_args_flag_a_recursive_delete():
+    args = tui_main.format_tool_args("delete_file", {"path": "build", "recursive": True})
+    assert args == "build (recursive)"
+
+
+def test_tool_args_show_the_result_count_for_a_web_search():
+    args = tui_main.format_tool_args("search_web", {"query": "asyncio", "max_results": 3})
+    assert args == '"asyncio" ×3'
+
+
+def test_tool_args_show_the_binary_for_check_command():
+    assert tui_main.format_tool_args("check_command", {"name": "yt-dlp"}) == "yt-dlp"

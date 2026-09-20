@@ -22,8 +22,8 @@ from ratchet.tui.main import (
     format_error_panel,
     format_prompt_panel,
     format_reply_panel,
-    format_tool_line,
     format_tool_panel,
+    format_tool_result_block,
 )
 from ratchet.tui.main import main as run_tui
 
@@ -62,7 +62,9 @@ def run_cli(
             if event.name == SPAWN_TOOL and not event.depth:
                 console.print(format_delegation_footer(event))
                 return
-            console.print(format_tool_line(event) if event.depth else format_tool_panel(event))
+            console.print(
+                format_tool_result_block(event) if event.depth else format_tool_panel(event)
+            )
 
         reply = run_agent_turn(call_llm, prompt, root, None, on_event, messages)
         save_session(messages, path)

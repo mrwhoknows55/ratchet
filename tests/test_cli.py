@@ -175,3 +175,22 @@ def test_run_cli_chat_frames_a_delegation_with_a_header_and_footer(monkeypatch, 
     assert "done" in out
     assert "3/8 steps" in out
     assert "notes.txt mentions retry" in out
+
+
+def test_run_cli_chat_previews_nested_tool_output(monkeypatch, tmp_path, capsys):
+    def fake_run_agent_turn(call_llm_fn, text, sandbox_root, override_config, on_event, messages):
+        on_event(
+            TurnEvent(
+                phase="tool_done", step=1, index=1, name="read_files",
+                arguments={"path": "a.txt"}, output="1| alpha\n2| beta\n3| gamma",
+                exit_code=0, elapsed=0.1, depth=1, agent="researcher",
+            )
+        )
+        return "done"
+
+    monkeypatch.setattr(cli, "run_agent_turn", fake_run_agent_turn)
+    cli.run_cli("read it", sandbox_root=tmp_path, session_path=tmp_path / "session.json")
+    out = capsys.readouterr().out
+    assert "3 lines" in out
+    assert "1| alpha" in out
+    assert "3| gamma" in out
