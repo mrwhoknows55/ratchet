@@ -9,8 +9,21 @@ ROLE_PROMPT_DIR = Path(__file__).parent.parent.parent.parent / "prompts" / "role
 
 DEFAULT_ROLE = "generalist"
 SPAWN_TOOL = "spawn_subagent"
+PARALLEL_SPAWN_TOOL = "spawn_parallel_subagent"
+SPAWN_TOOLS = {SPAWN_TOOL, PARALLEL_SPAWN_TOOL}
 DEFAULT_MAX_STEPS = 8
 DEFAULT_MAX_DEPTH = 1
+DEFAULT_MAX_PARALLEL = 4
+
+MUTATING_TOOLS = {
+    "write_files",
+    "replace_in_file",
+    "append_file",
+    "delete_file",
+    "copy_file",
+    "move_file",
+    "rollback_file",
+}
 
 _READ_TOOLS = [
     "list_files",
@@ -37,7 +50,7 @@ ROLE_TOOLS = {
     "generalist": [
         schema["function"]["name"]
         for schema in TOOL_SCHEMAS
-        if schema["function"]["name"] != SPAWN_TOOL
+        if schema["function"]["name"] not in SPAWN_TOOLS
     ],
 }
 
@@ -45,6 +58,18 @@ ROLE_TOOLS = {
 def normalize_role(role: str) -> str:
     name = (role or "").strip().lower()
     return name if name in ROLE_TOOLS else DEFAULT_ROLE
+
+
+def is_parallel_safe(role: str) -> bool:
+    name = (role or "").strip().lower()
+    if name not in ROLE_TOOLS:
+        return False
+    return not set(ROLE_TOOLS[name]) & MUTATING_TOOLS
+
+
+def max_parallel() -> int:
+    value = int(_subagent_config().get("max_parallel", DEFAULT_MAX_PARALLEL))
+    return max(1, value)
 
 
 def schema_for_role(role: str) -> list[dict]:
@@ -88,6 +113,7 @@ def spawn_subagent(
     role: str = DEFAULT_ROLE,
     context: str = "",
     max_steps: int | None = None,
+    parallel: bool = False,
 ) -> dict[str, str | int]:
     clean_task = (task or "").strip()
     if not clean_task:
@@ -102,6 +128,11 @@ def spawn_subagent(
         return _error("Error: no LLM client is available to run a subagent.")
 
     role_name = normalize_role(role)
+    if parallel and not is_parallel_safe(role_name):
+        return _error(
+            f"Error: role '{role_name}' can write files, so it cannot run in "
+            f"parallel. Use {SPAWN_TOOL} instead."
+        )
 
     budget = int(_subagent_config().get("max_steps", DEFAULT_MAX_STEPS))
     if max_steps:

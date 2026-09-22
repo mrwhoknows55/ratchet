@@ -21,6 +21,7 @@ DEFAULT_AGENT_CONFIG = {
 DEFAULT_SUBAGENT_CONFIG = {
     "max_steps": 8,
     "max_depth": 1,
+    "max_parallel": 4,
 }
 
 

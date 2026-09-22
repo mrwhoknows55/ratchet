@@ -21,6 +21,7 @@ DEFAULT_CONFIG = {
     "subagent": {
         "max_steps": 8,
         "max_depth": 1,
+        "max_parallel": 4,
     },
 }
 

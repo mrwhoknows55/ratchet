@@ -6,7 +6,10 @@ from ratchet.agent.context import AgentContext
 from ratchet.agent.events import TurnEvent
 from ratchet.agent.tools import TOOL_SCHEMAS
 
-ALL_TOOLS = {schema["function"]["name"] for schema in TOOL_SCHEMAS} - {"spawn_subagent"}
+ALL_TOOLS = {schema["function"]["name"] for schema in TOOL_SCHEMAS} - {
+    "spawn_subagent",
+    "spawn_parallel_subagent",
+}
 MUTATING = {
     "write_files",
     "replace_in_file",
@@ -271,3 +274,79 @@ def test_dispatch_routes_spawn_subagent(tmp_path):
 def test_subagent_defaults_come_from_the_config_module():
     assert agent_config.DEFAULT_CONFIG["subagent"]["max_steps"] == 8
     assert agent_config.DEFAULT_CONFIG["subagent"]["max_depth"] == 1
+
+
+def test_read_only_roles_are_parallel_safe():
+    assert subagent.is_parallel_safe("researcher")
+    assert subagent.is_parallel_safe("tester")
+
+
+def test_roles_that_can_write_are_not_parallel_safe():
+    assert not subagent.is_parallel_safe("coder")
+    assert not subagent.is_parallel_safe("generalist")
+
+
+def test_an_unknown_role_is_not_parallel_safe():
+    assert not subagent.is_parallel_safe("wizard")
+
+
+def test_max_parallel_default_comes_from_the_config_module():
+    assert agent_config.DEFAULT_CONFIG["subagent"]["max_parallel"] == 4
+
+
+def test_both_spawn_tools_are_registered():
+    names = {s["function"]["name"] for s in TOOL_SCHEMAS}
+    assert {subagent.SPAWN_TOOL, subagent.PARALLEL_SPAWN_TOOL} <= names
+
+
+def test_the_parallel_spawn_tool_only_offers_parallel_safe_roles():
+    schema = next(
+        s["function"]
+        for s in TOOL_SCHEMAS
+        if s["function"]["name"] == subagent.PARALLEL_SPAWN_TOOL
+    )
+    roles = set(schema["parameters"]["properties"]["role"]["enum"])
+    assert roles == {"researcher", "tester"}
+    assert schema["parameters"]["required"] == ["task"]
+
+
+def test_no_role_is_offered_either_spawn_tool():
+    for role in subagent.ROLE_TOOLS:
+        names = {s["function"]["name"] for s in subagent.schema_for_role(role)}
+        assert not names & {subagent.SPAWN_TOOL, subagent.PARALLEL_SPAWN_TOOL}
+
+
+def test_a_parallel_spawn_refuses_a_role_that_can_write(tmp_path):
+    result = subagent.spawn_subagent(
+        _ctx(tmp_path, _once(_final("x"))), "go", "coder", parallel=True
+    )
+    assert result["exit_code"] == 1
+    assert "coder" in result["stderr"]
+
+
+def test_a_parallel_spawn_accepts_a_read_only_role(tmp_path):
+    result = subagent.spawn_subagent(
+        _ctx(tmp_path, _once(_final("found it"))), "go", "researcher", parallel=True
+    )
+    assert result["exit_code"] == 0
+
+
+def test_dispatch_routes_the_parallel_spawn_tool(tmp_path):
+    from ratchet.agent import tools as agent_tools
+
+    ctx = _ctx(tmp_path, _once(_final("delegated")))
+    result = agent_tools._dispatch(
+        subagent.PARALLEL_SPAWN_TOOL, {"task": "go", "role": "researcher"}, ctx
+    )
+    assert result["exit_code"] == 0
+    assert "delegated" in result["stdout"]
+
+
+def test_dispatch_refuses_a_writing_role_on_the_parallel_spawn_tool(tmp_path):
+    from ratchet.agent import tools as agent_tools
+
+    ctx = _ctx(tmp_path, _once(_final("delegated")))
+    result = agent_tools._dispatch(
+        subagent.PARALLEL_SPAWN_TOOL, {"task": "go", "role": "coder"}, ctx
+    )
+    assert result["exit_code"] == 1

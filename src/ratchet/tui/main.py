@@ -43,6 +43,7 @@ ARGS_WIDTH = 80
 NAME_WIDTH = 14
 ARG_KEYS = ("command", "query", "url", "path", "pattern", "task", "name")
 SPAWN_TOOL = "spawn_subagent"
+SPAWN_TOOLS = {SPAWN_TOOL, "spawn_parallel_subagent"}
 ROLE_COLOURS = {
     "researcher": "cyan",
     "coder": "yellow",
@@ -153,6 +154,10 @@ def format_tool_line(event: TurnEvent) -> str:
     return f"{indent}[green]\u2713[/green] [dim]{event.elapsed:.1f}s \u00b7[/dim] {summary}"
 
 
+def format_lane_tag(event: TurnEvent) -> str:
+    return f" #{event.lane}" if event.lane else ""
+
+
 def role_colour(role: str) -> str:
     return ROLE_COLOURS.get(role, ROLE_COLOURS["generalist"])
 
@@ -162,7 +167,8 @@ def format_delegation_header(event: TurnEvent) -> str:
     colour = role_colour(role)
     head = (
         f"{format_indent(event)}  [dim]{event.index}[/dim] [dim]\u25b8[/dim] "
-        f"{escape(event.name):<{NAME_WIDTH}} [{colour}]{role}[/{colour}] [dim]\u2026 running[/dim]"
+        f"{escape(event.name):<{NAME_WIDTH}} [{colour}]{role}{format_lane_tag(event)}[/{colour}]"
+        f" [dim]\u2026 running[/dim]"
     )
     task = _truncate(str(event.arguments.get("task", "")).strip(), ARGS_WIDTH)
     if not task:
@@ -189,7 +195,7 @@ def format_delegation_footer(event: TurnEvent) -> str:
     else:
         state = "[red]\u2717 failed[/red]"
     meta = " \u00b7 ".join(parts) or f"{event.elapsed:.1f}s"
-    lines = [f"{indent}{state} [{colour}]\u00b7 {escape(meta)}[/{colour}]"]
+    lines = [f"{indent}{state} [{colour}]{format_lane_tag(event)} \u00b7 {escape(meta)}[/{colour}]"]
     if summary:
         lines.append(f"{indent}[dim]\u25c6[/dim] {escape(summary)}")
     return "\n".join(lines)
@@ -255,10 +261,11 @@ def format_tool_start_panel(event: TurnEvent) -> Panel:
 
 
 def _status_label(event: TurnEvent) -> str:
+    label = f"{event.agent}{format_lane_tag(event)}"
     if event.phase == "thinking":
-        return f"{event.agent} thinking" if event.agent else "thinking"
+        return f"{label} thinking" if event.agent else "thinking"
     if event.agent:
-        return f"{event.agent} \u00b7 {event.name}"
+        return f"{label} \u00b7 {event.name}"
     return f"running {event.name}"
 
 
@@ -471,7 +478,7 @@ class RatchetApp(App):
             return
         if event.phase == "tool_start":
             status.set_step(self._parent_step, max_steps, _status_label(event))
-            if event.name == SPAWN_TOOL and not event.depth:
+            if event.name in SPAWN_TOOLS and not event.depth:
                 messages_widget.write(format_delegation_header(event))
             elif event.depth:
                 messages_widget.write(format_call_start_line(event))
@@ -480,7 +487,7 @@ class RatchetApp(App):
             self._write_log(format_call_log_line(event))
             return
         status.set_step(self._parent_step, max_steps)
-        if event.name == SPAWN_TOOL and not event.depth:
+        if event.name in SPAWN_TOOLS and not event.depth:
             messages_widget.write(format_delegation_footer(event))
         elif event.depth:
             messages_widget.write(format_tool_result_block(event))

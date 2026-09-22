@@ -13,6 +13,7 @@ class TurnEvent:
     elapsed: float = 0.0
     depth: int = 0
     agent: str = ""
+    lane: int = 0
 
 
 @dataclass

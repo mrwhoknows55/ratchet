@@ -146,3 +146,167 @@ def test_run_turn_falls_back_to_config_max_steps(monkeypatch, tmp_path):
 
     result = agent_loop.run_turn(fake_call_llm, "hi", tmp_path)
     assert result.steps == 3
+
+
+def _spawn_call(role, call_id, task="go", name="spawn_parallel_subagent"):
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": json.dumps({"task": task, "role": role}),
+        },
+    }
+
+
+def _parent_then_subagents(spawn_calls, subagent_reply):
+    state = {"parent_done": False}
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        names = {t["function"]["name"] for t in (tools or [])}
+        if "spawn_parallel_subagent" in names:
+            if state["parent_done"]:
+                return _final("parent done")
+            state["parent_done"] = True
+            return {"status": "success", "content": "", "tool_calls": spawn_calls}
+        return subagent_reply()
+
+    return fake_call_llm
+
+
+def test_parallel_spawns_of_a_read_only_role_run_concurrently(tmp_path):
+    import threading
+
+    barrier = threading.Barrier(2, timeout=5)
+
+    def subagent_reply():
+        barrier.wait()
+        return _final("sub done")
+
+    calls = [_spawn_call("researcher", "c1"), _spawn_call("researcher", "c2")]
+    messages = [{"role": "system", "content": "parent"}]
+    result = agent_loop.run_turn(
+        _parent_then_subagents(calls, subagent_reply), "hi", tmp_path, messages=messages
+    )
+    assert result.status == "ok"
+    assert not barrier.broken
+
+
+def _concurrency_probe():
+    import threading
+    import time
+
+    lock = threading.Lock()
+    state = {"now": 0, "peak": 0}
+
+    def subagent_reply():
+        with lock:
+            state["now"] += 1
+            state["peak"] = max(state["peak"], state["now"])
+        time.sleep(0.05)
+        with lock:
+            state["now"] -= 1
+        return _final("sub done")
+
+    return state, subagent_reply
+
+
+def test_plain_spawn_calls_never_run_in_parallel(tmp_path):
+    state, subagent_reply = _concurrency_probe()
+    calls = [
+        _spawn_call("researcher", "c1", name="spawn_subagent"),
+        _spawn_call("researcher", "c2", name="spawn_subagent"),
+    ]
+    agent_loop.run_turn(
+        _parent_then_subagents(calls, subagent_reply),
+        "hi",
+        tmp_path,
+        messages=[{"role": "system", "content": "parent"}],
+    )
+    assert state["peak"] == 1
+
+
+def test_ordinary_tool_calls_never_run_in_parallel(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    lock = threading.Lock()
+    state = {"now": 0, "peak": 0}
+
+    def fake_execute(name, arguments, context):
+        with lock:
+            state["now"] += 1
+            state["peak"] = max(state["peak"], state["now"])
+        time.sleep(0.05)
+        with lock:
+            state["now"] -= 1
+        return "ok", 0
+
+    monkeypatch.setattr(agent_loop, "execute_tool_result", fake_execute)
+    both = {
+        "status": "success",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "c1",
+                "type": "function",
+                "function": {"name": "list_files", "arguments": "{}"},
+            },
+            {
+                "id": "c2",
+                "type": "function",
+                "function": {"name": "list_files", "arguments": "{}"},
+            },
+        ],
+    }
+    agent_loop.run_turn(_replies(both, _final()), "hi", tmp_path)
+    assert state["peak"] == 1
+
+
+def test_parallel_tool_messages_keep_call_order(tmp_path):
+    import time
+
+    order = iter([0.06, 0.0])
+
+    def subagent_reply():
+        time.sleep(next(order))
+        return _final("sub done")
+
+    calls = [_spawn_call("researcher", "c1"), _spawn_call("researcher", "c2")]
+    messages = [{"role": "system", "content": "parent"}]
+    agent_loop.run_turn(
+        _parent_then_subagents(calls, subagent_reply), "hi", tmp_path, messages=messages
+    )
+    tool_ids = [m["tool_call_id"] for m in messages if m["role"] == "tool"]
+    assert tool_ids == ["c1", "c2"]
+
+
+def test_parallel_lanes_flush_their_events_without_interleaving(tmp_path):
+    events = []
+    calls = [_spawn_call("researcher", "c1"), _spawn_call("researcher", "c2")]
+    agent_loop.run_turn(
+        _parent_then_subagents(calls, lambda: _final("sub done")),
+        "hi",
+        tmp_path,
+        on_event=events.append,
+        messages=[{"role": "system", "content": "parent"}],
+    )
+    lanes = [e.lane for e in events if e.depth == 1]
+    assert lanes == sorted(lanes)
+    assert set(lanes) == {1, 2}
+
+
+def test_max_parallel_caps_the_worker_count(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.toml"
+    config_file.write_text("[subagent]\nmax_steps = 8\nmax_parallel = 2\n")
+    monkeypatch.setattr(agent_config, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(agent_config, "ENV_FILE", tmp_path / ".env")
+    state, subagent_reply = _concurrency_probe()
+    calls = [_spawn_call("researcher", f"c{i}") for i in range(4)]
+    agent_loop.run_turn(
+        _parent_then_subagents(calls, subagent_reply),
+        "hi",
+        tmp_path,
+        messages=[{"role": "system", "content": "parent"}],
+    )
+    assert state["peak"] == 2

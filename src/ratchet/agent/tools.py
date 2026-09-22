@@ -371,8 +371,8 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "spawn_subagent",
             "description": (
-                "Delegate a self-contained sub-task to a focused subagent and get back "
-                "only its summary, keeping long lookups out of this conversation."
+                "Delegate one self-contained sub-task to a focused subagent, blocking "
+                "until it returns only its summary. Runs alone, any role."
             ),
             "parameters": {
                 "type": "object",
@@ -390,6 +390,44 @@ TOOL_SCHEMAS = [
                         "description": (
                             "researcher reads, searches and browses; coder edits files; "
                             "tester runs commands; generalist has every tool."
+                        ),
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Background it needs, such as paths you already found.",
+                    },
+                    "max_steps": {
+                        "type": "integer",
+                        "description": "Lower the subagent's step budget. Cannot raise it.",
+                    },
+                },
+                "required": ["task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "spawn_parallel_subagent",
+            "description": (
+                "Same as spawn_subagent, but several of these in one reply run at the "
+                "same time. Read-only roles only, so the fan-out cannot clash."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": (
+                            "What the subagent must do, stated in full - it cannot see "
+                            "this conversation."
+                        ),
+                    },
+                    "role": {
+                        "type": "string",
+                        "enum": ["researcher", "tester"],
+                        "description": (
+                            "researcher reads, searches and browses; tester runs commands."
                         ),
                     },
                     "context": {
@@ -459,7 +497,7 @@ def _dispatch(name: str, arguments: dict, ctx: AgentContext) -> dict[str, str | 
         )
     elif name == "check_command":
         result = check_command(arguments["name"])
-    elif name == "spawn_subagent":
+    elif name in ("spawn_subagent", "spawn_parallel_subagent"):
         from ratchet.agent.subagent import spawn_subagent
 
         result = spawn_subagent(
@@ -468,6 +506,7 @@ def _dispatch(name: str, arguments: dict, ctx: AgentContext) -> dict[str, str | 
             arguments.get("role", ""),
             arguments.get("context", ""),
             arguments.get("max_steps"),
+            parallel=name == "spawn_parallel_subagent",
         )
     else:
         return {

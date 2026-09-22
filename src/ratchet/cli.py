@@ -15,7 +15,7 @@ from ratchet.agent.tools import (
 )
 from ratchet.shell.executor import run_command
 from ratchet.tui.main import (
-    SPAWN_TOOL,
+    SPAWN_TOOLS,
     format_call_start_line,
     format_delegation_footer,
     format_delegation_header,
@@ -52,14 +52,14 @@ def run_cli(
             if event.phase == "thinking":
                 return
             if event.phase == "tool_start":
-                if event.name == SPAWN_TOOL and not event.depth:
+                if event.name in SPAWN_TOOLS and not event.depth:
                     console.print(format_delegation_header(event))
                 elif event.depth:
                     console.print(format_call_start_line(event))
                 else:
                     console.print(f"[dim]→ running {escape(event.name)}...[/dim]")
                 return
-            if event.name == SPAWN_TOOL and not event.depth:
+            if event.name in SPAWN_TOOLS and not event.depth:
                 console.print(format_delegation_footer(event))
                 return
             console.print(

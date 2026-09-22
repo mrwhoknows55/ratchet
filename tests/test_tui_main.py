@@ -1350,3 +1350,27 @@ def test_tool_args_show_the_result_count_for_a_web_search():
 
 def test_tool_args_show_the_binary_for_check_command():
     assert tui_main.format_tool_args("check_command", {"name": "yt-dlp"}) == "yt-dlp"
+
+
+def _lane_event(phase, lane, **extra):
+    event = _spawn_event(phase, **extra)
+    event.lane = lane
+    return event
+
+
+def test_delegation_header_tags_the_lane_when_running_in_parallel():
+    assert "researcher #2" in tui_main.format_delegation_header(_lane_event("tool_start", 2))
+
+
+def test_delegation_header_omits_the_lane_tag_when_running_alone():
+    assert "#" not in tui_main.format_delegation_header(_lane_event("tool_start", 0))
+
+
+def test_delegation_footer_tags_the_lane_when_running_in_parallel():
+    footer = tui_main.format_delegation_footer(_lane_event("tool_done", 2, output="found it"))
+    assert "#2" in footer
+
+
+def test_status_label_tags_the_lane_of_a_parallel_subagent():
+    event = tui_main.TurnEvent(phase="thinking", step=1, depth=1, agent="researcher", lane=2)
+    assert tui_main._status_label(event) == "researcher #2 thinking"
