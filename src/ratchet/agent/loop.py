@@ -14,8 +14,17 @@ from ratchet.agent.tools import SYSTEM_PROMPT, TOOL_SCHEMAS, execute_tool_result
 DEFAULT_MAX_STEPS = 12
 
 
-def _arguments(call: dict) -> dict:
-    return json.loads(call["function"]["arguments"] or "{}")
+def _arguments(call: dict) -> dict | None:
+    try:
+        return json.loads(call["function"]["arguments"] or "{}")
+    except json.JSONDecodeError:
+        return None
+
+
+def _execute(name: str, arguments: dict | None, ctx: AgentContext) -> tuple[str, int]:
+    if arguments is None:
+        return f"[Error] invalid JSON arguments for {name}; resend the call with valid JSON", 1
+    return execute_tool_result(name, arguments, ctx)
 
 
 def _parallel_group(tool_calls: list[dict]) -> bool:
@@ -44,7 +53,7 @@ def _run_lanes(
             step=step,
             index=index,
             name=call["function"]["name"],
-            arguments=arguments,
+            arguments=arguments or {},
             depth=ctx.depth,
             agent=agent,
             lane=lane,
@@ -60,7 +69,7 @@ def _run_lanes(
         buffer: list[TurnEvent] = []
         lane_ctx = replace(ctx, on_event=lambda e: buffer.append(replace(e, lane=lane)))
         started = time.monotonic()
-        output, exit_code = execute_tool_result(call["function"]["name"], arguments, lane_ctx)
+        output, exit_code = _execute(call["function"]["name"], arguments, lane_ctx)
         return buffer, output, exit_code, time.monotonic() - started
 
     outputs: list[tuple[str, str]] = []
@@ -176,13 +185,13 @@ def run_turn(
                         step=step,
                         index=index,
                         name=tool_name,
-                        arguments=arguments,
+                        arguments=arguments or {},
                         depth=depth,
                         agent=agent,
                     )
                 )
             call_started = time.monotonic()
-            output, exit_code = execute_tool_result(tool_name, arguments, ctx)
+            output, exit_code = _execute(tool_name, arguments, ctx)
             if on_event:
                 on_event(
                     TurnEvent(
@@ -190,7 +199,7 @@ def run_turn(
                         step=step,
                         index=index,
                         name=tool_name,
-                        arguments=arguments,
+                        arguments=arguments or {},
                         output=output,
                         exit_code=exit_code,
                         elapsed=time.monotonic() - call_started,

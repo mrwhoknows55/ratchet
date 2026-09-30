@@ -1,5 +1,6 @@
 import asyncio
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -460,6 +461,9 @@ class RatchetApp(App):
                 )
                 log_message = f"assistant: {reply}"
                 await asyncio.to_thread(save_session, self.messages, self.session_path)
+        except Exception as e:
+            reply = f"[Error] {type(e).__name__}: {e}"
+            log_message = f"error: {traceback.format_exc().rstrip()}"
         finally:
             status.stop()
 

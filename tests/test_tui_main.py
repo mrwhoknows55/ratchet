@@ -432,6 +432,27 @@ async def test_error_reply_content_is_still_displayed(tmp_path, monkeypatch):
         assert any("[API Error] boom" in line for line in lines)
 
 
+async def test_turn_exception_is_shown_and_logged_without_crashing(tmp_path, monkeypatch):
+    def exploding_turn(*args, **kwargs):
+        raise ValueError("kaboom")
+
+    monkeypatch.setattr(tui_main, "run_agent_turn", exploding_turn)
+    log_path = tmp_path / "ratchet.log"
+    app = RatchetApp(log_path=log_path)
+    async with app.run_test() as pilot:
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "hello there"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        assert app.is_running
+        lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]
+        assert any("ValueError: kaboom" in line for line in lines)
+    content = log_path.read_text()
+    assert "Traceback (most recent call last)" in content
+    assert "ValueError: kaboom" in content
+
+
 async def test_tool_call_shows_a_result_line_in_display(tmp_path, monkeypatch):
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()

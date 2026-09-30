@@ -112,6 +112,22 @@ def test_run_turn_reports_error_status_when_the_llm_fails(tmp_path):
     assert "Offline" in result.text
 
 
+def test_malformed_tool_arguments_are_reported_back_to_the_model(tmp_path):
+    bad_call = _tool_call("read_files", {})
+    bad_call["tool_calls"][0]["function"]["arguments"] = '{"path": "a.txt"'
+    seen = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        seen.append(list(messages))
+        return bad_call if len(seen) == 1 else _final("recovered")
+
+    result = agent_loop.run_turn(fake_call_llm, "hi", tmp_path)
+    assert result.text == "recovered"
+    tool_message = seen[1][-1]
+    assert tool_message["role"] == "tool"
+    assert "invalid JSON arguments" in tool_message["content"]
+
+
 def test_run_turn_passes_depth_through_to_the_context(tmp_path, monkeypatch):
     seen = {}
 
