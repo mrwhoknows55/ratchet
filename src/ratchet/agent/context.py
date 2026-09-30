@@ -10,6 +10,7 @@ class AgentContext:
     override_config: dict | None = None
     on_event: Callable | None = None
     depth: int = 0
+    plan_mode: bool = False
 
 
 def as_context(value: "AgentContext | Path") -> "AgentContext":

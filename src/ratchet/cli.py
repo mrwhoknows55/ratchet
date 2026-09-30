@@ -7,6 +7,7 @@ from rich.markup import escape
 from ratchet.agent.client import call_llm
 from ratchet.agent.events import TurnEvent
 from ratchet.agent.loop import run_agent_turn
+from ratchet.agent.plan import EXECUTE_PLAN_PROMPT
 from ratchet.agent.tools import (
     SYSTEM_PROMPT,
     clear_session,
@@ -35,6 +36,7 @@ def run_cli(
     mode: str = "chat",
     sandbox_root: Path | None = None,
     session_path: Path | None = None,
+    plan_mode: bool = False,
 ) -> None:
     console = Console()
     root = sandbox_root or (Path.cwd() / "sandbox")
@@ -66,7 +68,9 @@ def run_cli(
                 format_tool_result_block(event) if event.depth else format_tool_panel(event)
             )
 
-        reply = run_agent_turn(call_llm, prompt, root, None, on_event, messages)
+        reply = run_agent_turn(
+            call_llm, prompt, root, None, on_event, messages, plan_mode=plan_mode
+        )
         save_session(messages, path)
 
     console.print(format_error_panel(reply) if reply.startswith("[") else format_reply_panel(reply))
@@ -77,6 +81,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--new", "--clear", "--reset", dest="reset_session", action="store_true"
     )
+    parser.add_argument("--plan", action="store_true")
+    parser.add_argument("--execute-plan", action="store_true")
     parser.add_argument("args", nargs="*", metavar="[shell] [prompt ...]")
     parsed = parser.parse_args(argv)
     args = list(parsed.args)
@@ -87,6 +93,8 @@ def main(argv: list[str] | None = None) -> None:
         args.pop(0)
 
     prompt = " ".join(args).strip()
+    if parsed.execute_plan:
+        prompt = f"{EXECUTE_PLAN_PROMPT}\n\n{prompt}".strip()
 
     if parsed.reset_session:
         clear_session(DEFAULT_SESSION_PATH)
@@ -94,7 +102,9 @@ def main(argv: list[str] | None = None) -> None:
             Console().print("[bold yellow]Session history cleared.[/bold yellow]")
             return
 
-    if prompt:
+    if prompt and parsed.plan:
+        run_cli(prompt, mode, plan_mode=True)
+    elif prompt:
         run_cli(prompt, mode)
     else:
         run_tui(mode=mode)

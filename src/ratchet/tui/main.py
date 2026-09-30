@@ -389,6 +389,7 @@ class RatchetApp(App):
         Binding("ctrl+l", "clear_log", "Clear Log"),
         Binding("ctrl+r", "reset_memory", "Reset Memory"),
         Binding("ctrl+p", "pick_model", "Pick Model"),
+        Binding("ctrl+b", "toggle_plan_mode", "Plan Mode"),
     ]
 
     def __init__(
@@ -404,6 +405,7 @@ class RatchetApp(App):
         self.sandbox_root = sandbox_root or (Path.cwd() / "sandbox")
         self.session_path = session_path or (log_path.parent / "session.json")
         self.selected_model: dict[str, str] | None = None
+        self.plan_mode = False
         self._parent_step = 0
         self.messages: list[dict] = load_session(self.session_path) or [
             {"role": "system", "content": SYSTEM_PROMPT}
@@ -458,6 +460,7 @@ class RatchetApp(App):
                     override_config,
                     lambda event: self.call_from_thread(self._on_turn_event, event),
                     self.messages,
+                    plan_mode=self.plan_mode,
                 )
                 log_message = f"assistant: {reply}"
                 await asyncio.to_thread(save_session, self.messages, self.session_path)
@@ -518,6 +521,13 @@ class RatchetApp(App):
         clear_session(self.session_path)
         messages_widget.write(format_ack_panel("Memory reset."))
         self._write_log("memory reset")
+
+    def action_toggle_plan_mode(self) -> None:
+        self.plan_mode = not self.plan_mode
+        self.sub_title = "plan mode" if self.plan_mode else ""
+        message = "Plan mode on: read-only." if self.plan_mode else "Plan mode off."
+        self.query_one("#messages", RichLog).write(format_ack_panel(message))
+        self._write_log(message.lower())
 
     def action_pick_model(self) -> None:
         self._pick_model()

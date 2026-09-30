@@ -128,6 +128,31 @@ def test_malformed_tool_arguments_are_reported_back_to_the_model(tmp_path):
     assert "invalid JSON arguments" in tool_message["content"]
 
 
+def test_plan_mode_offers_read_only_tools_and_tells_the_model(tmp_path):
+    seen = {}
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        seen["tools"] = {schema["function"]["name"] for schema in tools}
+        seen["user"] = messages[-1]["content"]
+        return _final("planned")
+
+    agent_loop.run_turn(fake_call_llm, "design it", tmp_path, plan_mode=True)
+    assert "create_plan" in seen["tools"]
+    assert "write_files" not in seen["tools"]
+    assert "design it" in seen["user"]
+    assert "plan mode" in seen["user"].lower()
+
+
+def test_plan_mode_blocks_a_mutating_call_the_model_sends_anyway(tmp_path):
+    fake = _replies(_tool_call("write_files", {"path": "a.txt", "content": "x"}), _final())
+    events = []
+    agent_loop.run_turn(fake, "hi", tmp_path, on_event=events.append, plan_mode=True)
+    assert not (tmp_path / "a.txt").exists()
+    done = [e for e in events if e.phase == "tool_done"][0]
+    assert done.exit_code == 1
+    assert "plan mode" in done.output.lower()
+
+
 def test_run_turn_passes_depth_through_to_the_context(tmp_path, monkeypatch):
     seen = {}
 

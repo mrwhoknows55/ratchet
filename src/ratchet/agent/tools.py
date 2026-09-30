@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ratchet.agent.config import load_config
 from ratchet.agent.context import AgentContext, as_context
+from ratchet.agent.plan import PLAN_FILE, create_plan
 from ratchet.agent.web import (
     DEFAULT_MAX_RESULTS,
     MAX_RESULTS_LIMIT,
@@ -369,6 +370,28 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "create_plan",
+            "description": (
+                f"Save a step-by-step plan to {PLAN_FILE} as a checklist, "
+                "replacing any earlier plan."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short name for the plan."},
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Ordered, concrete steps, one action each.",
+                    },
+                },
+                "required": ["title", "steps"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "spawn_subagent",
             "description": (
                 "Delegate one self-contained sub-task to a focused subagent, blocking "
@@ -497,6 +520,8 @@ def _dispatch(name: str, arguments: dict, ctx: AgentContext) -> dict[str, str | 
         )
     elif name == "check_command":
         result = check_command(arguments["name"])
+    elif name == "create_plan":
+        result = create_plan(sandbox_root, arguments.get("title", ""), arguments.get("steps", []))
     elif name in ("spawn_subagent", "spawn_parallel_subagent"):
         from ratchet.agent.subagent import spawn_subagent
 

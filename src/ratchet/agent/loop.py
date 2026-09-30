@@ -8,6 +8,12 @@ from typing import Callable
 from ratchet.agent.config import load_config
 from ratchet.agent.context import AgentContext
 from ratchet.agent.events import TurnEvent, TurnResult
+from ratchet.agent.plan import (
+    PLAN_MODE_NOTE,
+    PLAN_MODE_TOOLS,
+    blocked_in_plan_mode,
+    plan_mode_schemas,
+)
 from ratchet.agent.subagent import PARALLEL_SPAWN_TOOL, max_parallel
 from ratchet.agent.tools import SYSTEM_PROMPT, TOOL_SCHEMAS, execute_tool_result
 
@@ -24,6 +30,8 @@ def _arguments(call: dict) -> dict | None:
 def _execute(name: str, arguments: dict | None, ctx: AgentContext) -> tuple[str, int]:
     if arguments is None:
         return f"[Error] invalid JSON arguments for {name}; resend the call with valid JSON", 1
+    if ctx.plan_mode and name not in PLAN_MODE_TOOLS:
+        return blocked_in_plan_mode(name), 1
     return execute_tool_result(name, arguments, ctx)
 
 
@@ -106,13 +114,18 @@ def run_turn(
     max_steps: int | None = None,
     depth: int = 0,
     agent: str = "",
+    plan_mode: bool = False,
 ) -> TurnResult:
     if messages is None:
         messages = [{"role": "system", "content": system_prompt or SYSTEM_PROMPT}]
+    if plan_mode:
+        user_text = f"{PLAN_MODE_NOTE}\n\n{user_text}"
     messages.append({"role": "user", "content": user_text})
     if max_steps is None:
         max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
-    if tools_schema is None:
+    if plan_mode:
+        tools_schema = plan_mode_schemas()
+    elif tools_schema is None:
         tools_schema = TOOL_SCHEMAS
 
     ctx = AgentContext(
@@ -121,6 +134,7 @@ def run_turn(
         override_config=override_config,
         on_event=on_event,
         depth=depth,
+        plan_mode=plan_mode,
     )
     started = time.monotonic()
     tools_used: list[str] = []
@@ -229,7 +243,14 @@ def run_agent_turn(
     override_config: dict | None = None,
     on_event: Callable[[TurnEvent], None] | None = None,
     messages: list[dict] | None = None,
+    plan_mode: bool = False,
 ) -> str:
     return run_turn(
-        call_llm_fn, user_text, sandbox_root, override_config, on_event, messages
+        call_llm_fn,
+        user_text,
+        sandbox_root,
+        override_config,
+        on_event,
+        messages,
+        plan_mode=plan_mode,
     ).text

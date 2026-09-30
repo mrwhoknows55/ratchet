@@ -86,6 +86,14 @@ uv run ratchet --clear
 uv run ratchet --reset
 ```
 
+Plan mode is read-only: the agent inspects the sandbox and saves a checklist to `PLAN.md`.
+Toggle it in the TUI with `Ctrl+B`.
+
+```
+uv run ratchet --plan "Design a math module with safe division and caching"
+uv run ratchet --execute-plan
+```
+
 ## Test
 
 ```

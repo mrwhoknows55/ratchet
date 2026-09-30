@@ -432,6 +432,30 @@ async def test_error_reply_content_is_still_displayed(tmp_path, monkeypatch):
         assert any("[API Error] boom" in line for line in lines)
 
 
+async def test_ctrl_b_toggles_plan_mode_for_the_next_turn(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_call_llm(messages, override_config=None, tools=None):
+        seen.append({schema["function"]["name"] for schema in tools})
+        return {"content": "mock-reply", "model": "test-model", "status": "success"}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+b")
+        assert app.plan_mode
+        assert "plan" in app.sub_title.lower()
+        input_widget = app.query_one("#message_input", PromptInput)
+        input_widget.focus()
+        input_widget.text = "design it"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.press("ctrl+b")
+        assert not app.plan_mode
+        assert app.sub_title == ""
+    assert "write_files" not in seen[0]
+
+
 async def test_turn_exception_is_shown_and_logged_without_crashing(tmp_path, monkeypatch):
     def exploding_turn(*args, **kwargs):
         raise ValueError("kaboom")

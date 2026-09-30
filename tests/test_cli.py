@@ -31,7 +31,9 @@ def test_main_with_shell_and_prompt_runs_cli_shell_mode(monkeypatch):
 
 
 def test_run_cli_chat_prints_tool_chain_and_reply(monkeypatch, tmp_path, capsys):
-    def fake_run_agent_turn(call_llm_fn, text, sandbox_root, override_config, on_event, messages):
+    def fake_run_agent_turn(
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+    ):
         on_event(
             TurnEvent(phase="tool_start", step=1, name="read_file", arguments={"path": "a.txt"})
         )
@@ -46,7 +48,9 @@ def test_run_cli_chat_prints_tool_chain_and_reply(monkeypatch, tmp_path, capsys)
 
 
 def test_run_cli_chat_announces_a_tool_before_it_runs(monkeypatch, tmp_path, capsys):
-    def fake_run_agent_turn(call_llm_fn, text, sandbox_root, override_config, on_event, messages):
+    def fake_run_agent_turn(
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+    ):
         on_event(
             TurnEvent(phase="tool_start", step=1, name="read_file", arguments={"path": "a.txt"})
         )
@@ -62,7 +66,9 @@ def test_run_cli_chat_announces_a_tool_before_it_runs(monkeypatch, tmp_path, cap
 def test_run_cli_chat_persists_session_across_calls(monkeypatch, tmp_path):
     calls = []
 
-    def fake_run_agent_turn(call_llm_fn, text, sandbox_root, override_config, on_event, messages):
+    def fake_run_agent_turn(
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+    ):
         calls.append(list(messages))
         messages.append({"role": "user", "content": text})
         messages.append({"role": "assistant", "content": "ack"})
@@ -127,7 +133,9 @@ def test_run_cli_shell_prints_output_and_exit_code(monkeypatch, tmp_path, capsys
 
 
 def test_run_cli_chat_indents_nested_subagent_calls(monkeypatch, tmp_path, capsys):
-    def fake_run_agent_turn(call_llm_fn, text, sandbox_root, override_config, on_event, messages):
+    def fake_run_agent_turn(
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+    ):
         on_event(
             TurnEvent(
                 phase="tool_start", step=1, index=1, name="read_files",
@@ -153,7 +161,9 @@ def test_run_cli_chat_indents_nested_subagent_calls(monkeypatch, tmp_path, capsy
 def test_run_cli_chat_frames_a_delegation_with_a_header_and_footer(monkeypatch, tmp_path, capsys):
     output = "notes.txt mentions retry\n[researcher · 4.1s · 3/8 steps · 360 tok · via read_files]"
 
-    def fake_run_agent_turn(call_llm_fn, text, sandbox_root, override_config, on_event, messages):
+    def fake_run_agent_turn(
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+    ):
         args = {"task": "which file mentions retry", "role": "researcher"}
         on_event(
             TurnEvent(phase="tool_start", step=1, index=1, name="spawn_subagent", arguments=args)
@@ -178,7 +188,9 @@ def test_run_cli_chat_frames_a_delegation_with_a_header_and_footer(monkeypatch, 
 
 
 def test_run_cli_chat_previews_nested_tool_output(monkeypatch, tmp_path, capsys):
-    def fake_run_agent_turn(call_llm_fn, text, sandbox_root, override_config, on_event, messages):
+    def fake_run_agent_turn(
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+    ):
         on_event(
             TurnEvent(
                 phase="tool_done", step=1, index=1, name="read_files",
@@ -194,3 +206,35 @@ def test_run_cli_chat_previews_nested_tool_output(monkeypatch, tmp_path, capsys)
     assert "3 lines" in out
     assert "1| alpha" in out
     assert "3| gamma" in out
+
+
+def test_main_with_plan_flag_runs_the_prompt_in_plan_mode(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        cli, "run_cli", lambda prompt, mode, plan_mode=False: called.append((prompt, plan_mode))
+    )
+    cli.main(["--plan", "design", "a", "cache"])
+    assert called == [("design a cache", True)]
+
+
+def test_main_with_execute_plan_flag_asks_the_agent_to_work_through_the_plan(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        cli, "run_cli", lambda prompt, mode, plan_mode=False: called.append((prompt, plan_mode))
+    )
+    cli.main(["--execute-plan"])
+    assert called == [(cli.EXECUTE_PLAN_PROMPT, False)]
+
+
+def test_run_cli_passes_plan_mode_to_the_agent_turn(monkeypatch, tmp_path):
+    seen = []
+
+    def fake_run_agent_turn(
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+    ):
+        seen.append(plan_mode)
+        return "planned"
+
+    monkeypatch.setattr(cli, "run_agent_turn", fake_run_agent_turn)
+    cli.run_cli("plan it", sandbox_root=tmp_path, session_path=tmp_path / "s.json", plan_mode=True)
+    assert seen == [True]
