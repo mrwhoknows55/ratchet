@@ -121,8 +121,37 @@ uv run ratchet --clear
 uv run ratchet --reset
 ```
 
-Plan mode is read-only: the agent inspects the sandbox and saves a checklist to `PLAN.md`.
+Plan mode allows inspection and plan creation, while blocking workspace edits and commands.
+Plans are saved inside the sandbox as `PLAN.json` and a readable `PLAN.md` checklist.
 Toggle it in the TUI with `Ctrl+B`.
+
+The TUI restores the active plan at startup in a scrollable side panel.
+Plan creation, retrieval, and status updates refresh the panel and print progress cards in both frontends.
+Cards show step IDs, statuses, target files, notes, risks, and the completed-step percentage.
+Updates from delegated planners appear alongside parent-agent updates.
+
+Planning can delegate inspection to `researcher` and `planner` subagents.
+Planners inspect architecture and save structured plans without executing them.
+Only researchers may run in parallel during planning; planners save shared plan files sequentially.
+Child turns inherit plan-mode restrictions and enforce their role's tool permissions at runtime.
+Delegated agents cannot invoke tools outside their role or spawn further subagents.
+
+`ask_user_question` pauses the agent for a clarifying answer, including inside planner subagents.
+The CLI accepts a numbered option or custom text; Ctrl+C cancels the question.
+The TUI shows a question dialog with choices and a custom-answer field; Escape cancels.
+Answers return to the asking agent's tool history; top-level answers persist with the conversation.
+Planner answers stay in the planner's isolated history and inform its returned summary.
+Cancelled questions, blank answers, and unavailable interactive handlers return errors without defaults.
+Parallel researchers cannot ask interactive questions; they report ambiguities to the parent agent.
+
+`create_plan` accepts string steps or structured steps with IDs, descriptions, target files,
+notes, and statuses, plus an optional summary and risks.
+`get_plan` retrieves the active plan and completion percentage, including during planning.
+During execution, `update_plan_step` records `pending`, `in_progress`, `completed`, `skipped`,
+or `failed` statuses and regenerates the checklist.
+Omitting notes preserves existing notes; an empty string clears them.
+`PLAN.json` is authoritative; use planning tools instead of editing checklist statuses directly.
+Existing markdown-only plans must be recreated before structured execution.
 
 ```
 uv run ratchet --plan "Design a math module with safe division and caching"

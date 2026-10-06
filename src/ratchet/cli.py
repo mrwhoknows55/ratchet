@@ -3,6 +3,7 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.markup import escape
+from rich.panel import Panel
 
 from ratchet.agent.client import call_llm
 from ratchet.agent.events import TurnEvent
@@ -25,10 +26,33 @@ from ratchet.tui.main import (
     format_reply_panel,
     format_tool_panel,
     format_tool_result_block,
+    plan_panel_for_event,
 )
 from ratchet.tui.main import main as run_tui
 
 DEFAULT_SESSION_PATH = Path("log/session.json")
+
+
+def ask_user_question(question: str, options: list[str]) -> str | None:
+    console = Console()
+    console.print(Panel(escape(question), title="Clarifying question", border_style="cyan"))
+    for index, option in enumerate(options, 1):
+        console.print(f"  {index}. {escape(option)}")
+    while True:
+        try:
+            answer = console.input("Answer (number or custom text; Ctrl+C to cancel): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if not answer:
+            console.print("Please provide an answer.")
+            continue
+        if options and answer.isdecimal():
+            choice = int(answer)
+            if not 1 <= choice <= len(options):
+                console.print("Choose a listed number or enter a custom answer.")
+                continue
+            return options[choice - 1]
+        return answer
 
 
 def run_cli(
@@ -64,12 +88,17 @@ def run_cli(
             if event.name in SPAWN_TOOLS and not event.depth:
                 console.print(format_delegation_footer(event))
                 return
+            plan_card = plan_panel_for_event(event, root)
+            if plan_card is not None:
+                console.print(plan_card)
+                return
             console.print(
                 format_tool_result_block(event) if event.depth else format_tool_panel(event)
             )
 
         reply = run_agent_turn(
-            call_llm, prompt, root, None, on_event, messages, plan_mode=plan_mode
+            call_llm, prompt, root, None, on_event, messages, plan_mode=plan_mode,
+            ask_user=ask_user_question,
         )
         save_session(messages, path)
 

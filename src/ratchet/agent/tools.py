@@ -5,7 +5,15 @@ from pathlib import Path
 from ratchet.agent.config import load_config
 from ratchet.agent.context import AgentContext, as_context
 from ratchet.agent.media import download_video, extract_text
-from ratchet.agent.plan import PLAN_FILE, create_plan
+from ratchet.agent.plan import (
+    PLAN_FILE,
+    PLAN_JSON_FILE,
+    PLAN_STATUSES,
+    create_plan,
+    get_plan,
+    update_plan_step,
+)
+from ratchet.agent.questions import ask_user_question
 from ratchet.agent.web import (
     DEFAULT_MAX_RESULTS,
     MAX_RESULTS_LIMIT,
@@ -461,7 +469,7 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "create_plan",
             "description": (
-                f"Save a step-by-step plan to {PLAN_FILE} as a checklist, "
+                f"Save a structured plan to {PLAN_FILE} and {PLAN_JSON_FILE}, "
                 "replacing any earlier plan."
             ),
             "parameters": {
@@ -470,11 +478,75 @@ TOOL_SCHEMAS = [
                     "title": {"type": "string", "description": "Short name for the plan."},
                     "steps": {
                         "type": "array",
-                        "items": {"type": "string"},
+                        "items": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {"type": ["integer", "string"]},
+                                        "description": {"type": "string"},
+                                        "target_files": {
+                                            "type": "array", "items": {"type": "string"},
+                                        },
+                                        "notes": {"type": "string"},
+                                        "status": {"type": "string", "enum": list(PLAN_STATUSES)},
+                                    },
+                                    "required": ["description"],
+                                },
+                            ],
+                        },
                         "description": "Ordered, concrete steps, one action each.",
                     },
+                    "summary": {"type": "string"},
+                    "risks": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["title", "steps"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_plan",
+            "description": "Retrieve the active structured plan and completion progress.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_plan_step",
+            "description": (
+                "Update a step by ID and regenerate the plan checklist. "
+                "Mark completed only after verification; record failure details in notes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "step_id": {"type": ["integer", "string"]},
+                    "status": {"type": "string", "enum": list(PLAN_STATUSES)},
+                    "notes": {"type": "string", "description": "Omit to preserve existing notes."},
+                },
+                "required": ["step_id", "status"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_user_question",
+            "description": (
+                "Ask a clarifying question and wait for the user's answer. "
+                "Offer optional choices or custom text. Never assume an answer if cancelled."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["question"],
             },
         },
     },
@@ -498,10 +570,11 @@ TOOL_SCHEMAS = [
                     },
                     "role": {
                         "type": "string",
-                        "enum": ["researcher", "coder", "tester", "generalist"],
+                        "enum": ["researcher", "coder", "tester", "generalist", "planner"],
                         "description": (
                             "researcher reads, searches and browses; coder edits files; "
-                            "tester runs commands; generalist has every tool."
+                            "tester runs commands; generalist has every tool; "
+                            "planner inspects and saves plans without executing them."
                         ),
                     },
                     "context": {
@@ -614,7 +687,19 @@ def _dispatch(name: str, arguments: dict, ctx: AgentContext) -> dict[str, str | 
     elif name == "check_command":
         result = check_command(arguments["name"])
     elif name == "create_plan":
-        result = create_plan(sandbox_root, arguments.get("title", ""), arguments.get("steps", []))
+        result = create_plan(
+            sandbox_root, arguments.get("title", ""), arguments.get("steps", []),
+            arguments.get("summary", ""), arguments.get("risks", []),
+        )
+    elif name == "get_plan":
+        result = get_plan(sandbox_root)
+    elif name == "ask_user_question":
+        result = ask_user_question(ctx, arguments.get("question", ""), arguments.get("options"))
+    elif name == "update_plan_step":
+        result = update_plan_step(
+            sandbox_root, arguments.get("step_id"), arguments.get("status"),
+            arguments.get("notes"),
+        )
     elif name in ("spawn_subagent", "spawn_parallel_subagent"):
         from ratchet.agent.subagent import spawn_subagent
 

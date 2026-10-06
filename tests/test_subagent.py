@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from ratchet.agent import config as agent_config
@@ -21,8 +23,8 @@ MUTATING = {
 }
 
 
-def test_roles_cover_the_four_named_subagents():
-    assert set(subagent.ROLE_TOOLS) == {"researcher", "coder", "tester", "generalist"}
+def test_roles_cover_the_named_subagents():
+    assert set(subagent.ROLE_TOOLS) == {"researcher", "coder", "tester", "generalist", "planner"}
 
 
 def test_every_role_only_names_real_tools():
@@ -72,7 +74,7 @@ def test_schema_for_role_falls_back_to_generalist_for_an_unknown_role():
     assert names == ALL_TOOLS
 
 
-@pytest.mark.parametrize("role", ["researcher", "coder", "tester", "generalist"])
+@pytest.mark.parametrize("role", ["researcher", "coder", "tester", "generalist", "planner"])
 def test_every_role_has_a_prompt_that_demands_a_summary(role):
     prompt = subagent.prompt_for_role(role)
     assert prompt.strip()
@@ -350,3 +352,53 @@ def test_dispatch_refuses_a_writing_role_on_the_parallel_spawn_tool(tmp_path):
         subagent.PARALLEL_SPAWN_TOOL, {"task": "go", "role": "coder"}, ctx
     )
     assert result["exit_code"] == 1
+
+
+def test_planner_can_inspect_and_save_plans_but_not_execute():
+    names = set(subagent.ROLE_TOOLS["planner"])
+    assert {"read_files", "search_web", "create_plan", "get_plan"} <= names
+    assert not names & (MUTATING | {"run_command", "update_plan_step"})
+    assert not subagent.is_parallel_safe("planner")
+
+
+@pytest.mark.parametrize("role", ["coder", "tester", "generalist", "wizard", ""])
+def test_planning_rejects_unsafe_or_unknown_delegation_roles(tmp_path, role):
+    def unexpected_llm(*args, **kwargs):
+        pytest.fail("Rejected role must not start a child turn")
+
+    ctx = AgentContext(sandbox_root=tmp_path, call_llm_fn=unexpected_llm, plan_mode=True)
+    result = subagent.spawn_subagent(ctx, "inspect", role)
+    assert result["exit_code"] == 1
+    assert "plan mode" in result["stderr"]
+
+
+@pytest.mark.parametrize("role, tool, arguments", [
+    ("researcher", "write_files", {"path": "bad.txt", "content": "bad"}),
+    ("researcher", "create_plan", {"title": "Bad", "steps": ["Bad"]}),
+    ("coder", "run_command", {"command": "touch bad.txt"}),
+    ("planner", "update_plan_step", {"step_id": 1, "status": "completed"}),
+    ("planner", "write_files", {"path": "bad.txt", "content": "bad"}),
+    ("researcher", "spawn_subagent", {"task": "write", "role": "coder"}),
+])
+def test_child_runtime_blocks_tools_outside_its_role(tmp_path, role, tool, arguments):
+    events = []
+    replies = iter([
+        {"status": "success", "content": "", "tool_calls": [{
+            "id": "bad", "type": "function",
+            "function": {"name": tool, "arguments": json.dumps(arguments)},
+        }]},
+        _final("blocked"),
+    ])
+
+    def fake_llm(messages, override_config=None, tools=None):
+        return next(replies)
+
+    result = subagent.spawn_subagent(
+        _ctx(tmp_path, fake_llm, on_event=events.append), "inspect", role
+    )
+    assert result["exit_code"] == 0
+    done = next(e for e in events if e.phase == "tool_done")
+    assert done.exit_code == 1
+    assert "blocked" in done.output.lower()
+    assert not (tmp_path / "bad.txt").exists()
+    assert not (tmp_path / "PLAN.json").exists()

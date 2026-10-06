@@ -3,6 +3,7 @@ import json
 from ratchet.agent import config as agent_config
 from ratchet.agent import loop as agent_loop
 from ratchet.agent.events import TurnResult
+from ratchet.agent.plan import EXECUTE_PLAN_PROMPT, create_plan
 
 
 def _replies(*payloads):
@@ -151,6 +152,29 @@ def test_plan_mode_blocks_a_mutating_call_the_model_sends_anyway(tmp_path):
     done = [e for e in events if e.phase == "tool_done"][0]
     assert done.exit_code == 1
     assert "plan mode" in done.output.lower()
+
+
+def test_execute_plan_tracks_a_real_file_change_and_verification(tmp_path):
+    create_plan(tmp_path, "Greeting", ["Write greeting"])
+    messages = []
+    calls = _replies(
+        _tool_call("get_plan", {}, "get"),
+        _tool_call("update_plan_step", {"step_id": 1, "status": "in_progress"}, "start"),
+        _tool_call("write_files", {"path": "hello.txt", "content": "Hello!"}, "write"),
+        _tool_call("read_files", {"path": "hello.txt"}, "verify"),
+        _tool_call("update_plan_step", {
+            "step_id": 1, "status": "completed", "notes": "Read back hello.txt",
+        }, "finish"),
+        _final("Executed and verified"),
+    )
+    result = agent_loop.run_turn(calls, EXECUTE_PLAN_PROMPT, tmp_path, messages=messages)
+    assert result.status == "ok"
+    assert (tmp_path / "hello.txt").read_text() == "Hello!"
+    outputs = {m["tool_call_id"]: m["content"] for m in messages if m["role"] == "tool"}
+    assert json.loads(outputs["start"])["plan"]["steps"][0]["status"] == "in_progress"
+    assert "Hello!" in outputs["verify"]
+    assert json.loads(outputs["finish"])["progress"]["percent"] == 100.0
+    assert "- [x] Write greeting (completed)" in (tmp_path / "PLAN.md").read_text()
 
 
 def test_run_turn_passes_depth_through_to_the_context(tmp_path, monkeypatch):
@@ -351,3 +375,61 @@ def test_max_parallel_caps_the_worker_count(monkeypatch, tmp_path):
         messages=[{"role": "system", "content": "parent"}],
     )
     assert state["peak"] == 2
+
+
+def test_plan_mode_delegates_plan_creation_to_a_planner(tmp_path):
+    events = []
+    calls = _replies(
+        _tool_call("spawn_subagent", {"task": "Design greeting", "role": "planner"}),
+        _tool_call("read_files", {"path": "hello.txt"}),
+        _tool_call("create_plan", {"title": "Greeting", "steps": ["Improve greeting"]}),
+        _final("Planner summary"),
+        _final("Review the plan"),
+    )
+    (tmp_path / "hello.txt").write_text("Hello!")
+    result = agent_loop.run_turn(calls, "plan greeting", tmp_path,
+                                 plan_mode=True, on_event=events.append)
+    assert result.status == "ok"
+    assert (tmp_path / "hello.txt").read_text() == "Hello!"
+    assert json.loads((tmp_path / "PLAN.json").read_text())["title"] == "Greeting"
+    nested = [e for e in events if e.depth == 1 and e.phase == "tool_done"]
+    assert [e.name for e in nested] == ["read_files", "create_plan"]
+    assert all(e.agent == "planner" and e.exit_code == 0 for e in nested)
+
+
+def test_planning_parallel_research_inherits_constraints_and_role_permissions(tmp_path):
+    import threading
+
+    barrier = threading.Barrier(2, timeout=5)
+    events = []
+    names_seen = []
+    lock = threading.Lock()
+    parent_done = False
+
+    def fake_llm(messages, override_config=None, tools=None):
+        nonlocal parent_done
+        names = {s["function"]["name"] for s in tools}
+        if "spawn_subagent" in names:
+            if parent_done:
+                return _final("Reviewed research")
+            parent_done = True
+            return {"status": "success", "content": "", "tool_calls": [
+                _spawn_call("researcher", "one"), _spawn_call("researcher", "two"),
+            ]}
+        if messages[-1]["role"] == "tool":
+            return _final("Blocked unexpected edit")
+        with lock:
+            names_seen.append(names)
+        barrier.wait()
+        return _tool_call("create_plan", {"title": "Bad", "steps": ["Bad"]})
+
+    result = agent_loop.run_turn(fake_llm, "inspect", tmp_path,
+                                 plan_mode=True, on_event=events.append)
+    assert result.status == "ok"
+    assert len(names_seen) == 2
+    assert all("read_files" in names and "create_plan" not in names for names in names_seen)
+    blocked = [e for e in events if e.depth == 1 and e.phase == "tool_done"]
+    assert len(blocked) == 2
+    assert all(e.exit_code == 1 and "blocked" in e.output.lower() for e in blocked)
+    assert {e.lane for e in blocked} == {1, 2}
+    assert not (tmp_path / "PLAN.json").exists()
