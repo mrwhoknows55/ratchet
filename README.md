@@ -11,7 +11,7 @@ AI harness written in Python for local models via LM Studio.
 - Messages logged to file with timestamps, prefixed by `user:` / `assistant:` role
 - Sandboxed shell mode (`uv run ratchet shell`) for running commands scoped to a `./sandbox` directory
 - Headless CLI mode: pass a prompt to skip the TUI and print one turn — `uv run ratchet "list the files"` or `uv run ratchet shell "ls"`
-- Tool calling in chat mode: 17 tools covering reads, writes, edits, search, file management, snapshots/rollback, shell commands, PATH checks and the web; tool execution always runs locally, regardless of which model backend answers
+- Tool calling in chat mode covers reads, writes, edits, search, file management, snapshots/rollback, shell commands, media, PATH checks and the web; tool execution always runs locally, regardless of which model backend answers
 - Web tools (`search_web`, `fetch_url`) via the Tavily REST API — set `TAVILY_API_KEY` to enable them; everything else works without it
 
 See [`docs/model-comparison.md`](docs/model-comparison.md) for comparing the
@@ -43,10 +43,45 @@ commands checklist.
 
 </details>
 
-Harness support for these: `openpyxl` is a project dependency, `yt-dlp` and
-`ffmpeg` are expected on `PATH`, and `run_command` takes a `timeout` (default
+Harness support for these: `openpyxl` is a project dependency; media tools
+use `yt-dlp`, `ffmpeg`, `ffprobe` and `tesseract` on `PATH`.
+`run_command` takes a `timeout` (default
 `agent.command_timeout`, capped at 600s) so downloads and encoding are not
-killed at 10s. Transcription has no tool yet — the zork task is blocked on it.
+killed at 10s. Video OCR is available, but complete benchmark solutions
+still require task-specific parsing and verification.
+
+## Media Tools
+
+- `download_video`: accepts `url` and `output_path`, downloading one video
+  to MP4 using yt-dlp. Supports YouTube and other yt-dlp-supported sites;
+  playlist inputs are limited to one item. Download only content you may access.
+- `extract_text`: accepts `path` and `output_path` for image OCR. Set
+  `media_type` to `video` for timestamped frame samples. This extracts visible
+  text, not speech. Defaults: `language=eng`, `psm=3`, `interval=1` second,
+  `start=0`, `max_frames=300`. Optional `end` bounds the video segment;
+  `psm=6` is useful for a uniform text block, such as a terminal screen.
+- Both use sandbox-relative paths, require existing output parent directories,
+  refuse overwrites, and clean up temporary intermediates. Their `timeout`
+  defaults to 120 seconds for the entire operation, with a maximum of 600.
+- Video OCR permits up to 1,000 frames per call. Read the sampling metadata;
+  if capped, continue at `sampled_end + interval` using another output path.
+  Sampling can miss brief text; decrease `interval` when necessary.
+
+OCR writes UTF-8 JSON containing `source`, `media_type`, and `records`.
+Each record contains `timestamp` (null for images) and the raw recognized
+`text`. Video output also contains `sampling` metadata and cap status.
+Timestamps represent nominal sampling positions, not exact frame timestamps.
+Blank and repeated observations remain intact; command extraction and
+deduplication belong to the caller, not the OCR tool.
+
+For example, download to `zork.mp4`, then OCR to `zork-ocr.json` using
+`media_type=video` and `psm=6`. Read the artifact before writing
+`app/solution.txt`; repeated frames are not necessarily repeated moves.
+
+Install the external binaries separately (macOS: `brew install yt-dlp ffmpeg
+tesseract`). FFmpeg supplies `ffprobe`; install additional Tesseract language
+data if needed. Check prerequisites using `check_command`.
+No new Python dependency or cloud OCR service is required.
 
 ## Setup
 

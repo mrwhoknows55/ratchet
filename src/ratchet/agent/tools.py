@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ratchet.agent.config import load_config
 from ratchet.agent.context import AgentContext, as_context
+from ratchet.agent.media import download_video, extract_text
 from ratchet.agent.plan import PLAN_FILE, create_plan
 from ratchet.agent.web import (
     DEFAULT_MAX_RESULTS,
@@ -55,6 +56,94 @@ SYSTEM_PROMPT = render_system_prompt(detect_platform())
 _PATH_PROPERTY = {"path": {"type": "string", "description": "Path relative to the sandbox root."}}
 
 TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "download_video",
+            "description": (
+                "Download one YouTube or other supported site's video to a new sandbox MP4. "
+                "Requires yt-dlp, ffmpeg and ffprobe."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string", "description": "HTTP(S) video URL, without credentials."
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": "New relative .mp4 path; parent directory must exist.",
+                    },
+                    "timeout": {
+                        "type": "integer", "minimum": 1, "maximum": 600,
+                        "description": "Total timeout in seconds. Default 120, maximum 600.",
+                    },
+                },
+                "required": ["url", "output_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "extract_text",
+            "description": (
+                "OCR an image or sampled video into JSON with text and nominal timestamps. "
+                "Requires Tesseract; video needs ffmpeg. Not audio transcription."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    **_PATH_PROPERTY,
+                    "output_path": {
+                        "type": "string",
+                        "description": "New relative JSON path; parent directory must exist.",
+                    },
+                    "media_type": {
+                        "type": "string", "enum": ["image", "video"],
+                        "description": "Input media type. Defaults to image.",
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Installed languages, e.g. eng or eng+fra. Default eng.",
+                    },
+                    "psm": {
+                        "type": "integer", "enum": [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+                        "description": (
+                            "Segmentation: 3 automatic (default), 6 text block, 7 line, 11 sparse."
+                        ),
+                    },
+                    "interval": {
+                        "type": "number", "exclusiveMinimum": 0,
+                        "description": (
+                            "Video sample interval in seconds. Default 1; brief text may be missed."
+                        ),
+                    },
+                    "start": {
+                        "type": "number", "minimum": 0,
+                        "description": "Video start in seconds. Default 0.",
+                    },
+                    "end": {
+                        "type": "number", "exclusiveMinimum": 0,
+                        "description": (
+                            "Video end in seconds, greater than start. Omit for EOF or frame cap."
+                        ),
+                    },
+                    "max_frames": {
+                        "type": "integer", "minimum": 1, "maximum": 1000,
+                        "description": (
+                            "Video cap: default 300, maximum 1000. Continue with start if capped."
+                        ),
+                    },
+                    "timeout": {
+                        "type": "integer", "minimum": 1, "maximum": 600,
+                        "description": "Total timeout in seconds. Default 120, maximum 600.",
+                    },
+                },
+                "required": ["path", "output_path"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -471,7 +560,11 @@ TOOL_SCHEMAS = [
 
 def _dispatch(name: str, arguments: dict, ctx: AgentContext) -> dict[str, str | int]:
     sandbox_root = ctx.sandbox_root
-    if name == "list_files":
+    if name == "download_video":
+        result = download_video(sandbox_root, **arguments)
+    elif name == "extract_text":
+        result = extract_text(sandbox_root, **arguments)
+    elif name == "list_files":
         result = list_files(sandbox_root, arguments.get("path", "."))
     elif name == "search_files":
         result = search_files(

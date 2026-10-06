@@ -16,6 +16,8 @@ DEFAULT_MAX_DEPTH = 1
 DEFAULT_MAX_PARALLEL = 4
 
 MUTATING_TOOLS = {
+    "download_video",
+    "extract_text",
     "write_files",
     "replace_in_file",
     "append_file",

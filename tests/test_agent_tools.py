@@ -876,3 +876,48 @@ def test_dispatch_reads_the_sandbox_root_from_the_context(tmp_path):
     ctx = AgentContext(sandbox_root=tmp_path, depth=3)
     result = agent_tools._dispatch("list_files", {}, ctx)
     assert "a.txt" in result["stdout"]
+
+
+def test_media_tool_schemas_and_permissions():
+    from ratchet.agent.plan import plan_mode_schemas
+    from ratchet.agent.subagent import schema_for_role
+
+    schemas = {s["function"]["name"]: s["function"] for s in agent_tools.TOOL_SCHEMAS}
+    assert schemas["download_video"]["parameters"]["required"] == ["url", "output_path"]
+    assert schemas["extract_text"]["parameters"]["required"] == ["path", "output_path"]
+    names = {"download_video", "extract_text"}
+    assert names <= {s["function"]["name"] for s in schema_for_role("generalist")}
+    assert not names & {s["function"]["name"] for s in plan_mode_schemas()}
+    assert not names & {s["function"]["name"] for s in schema_for_role("researcher")}
+
+
+def test_download_video_dispatch(tmp_path, monkeypatch):
+    calls = []
+
+    def download(root, **kwargs):
+        calls.append((root, kwargs))
+        return {"stdout": "Downloaded clip.mp4", "stderr": "", "exit_code": 0}
+
+    monkeypatch.setattr(agent_tools, "download_video", download)
+    arguments = {"url": "https://youtu.be/example", "output_path": "clip.mp4", "timeout": 240}
+    assert agent_tools.execute_tool_result("download_video", arguments, tmp_path) == (
+        "Downloaded clip.mp4", 0
+    )
+    assert calls == [(tmp_path, arguments)]
+
+
+def test_extract_text_dispatch(tmp_path, monkeypatch):
+    calls = []
+
+    def extract(root, **kwargs):
+        calls.append((root, kwargs))
+        return {"stdout": "", "stderr": "OCR failed", "exit_code": 9}
+
+    monkeypatch.setattr(agent_tools, "extract_text", extract)
+    arguments = {
+        "path": "clip.mp4", "output_path": "ocr.json", "media_type": "video",
+        "language": "eng", "psm": 6, "interval": 0.5, "start": 10, "end": 20,
+        "max_frames": 20, "timeout": 240,
+    }
+    assert agent_tools.execute_tool_result("extract_text", arguments, tmp_path) == ("OCR failed", 9)
+    assert calls == [(tmp_path, arguments)]
