@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from ratchet import cli
 from ratchet.agent.events import TurnEvent
 
@@ -32,7 +36,8 @@ def test_main_with_shell_and_prompt_runs_cli_shell_mode(monkeypatch):
 
 def test_run_cli_chat_prints_tool_chain_and_reply(monkeypatch, tmp_path, capsys):
     def fake_run_agent_turn(
-        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages,
+        plan_mode=False, ask_user=None,
     ):
         on_event(
             TurnEvent(phase="tool_start", step=1, name="read_file", arguments={"path": "a.txt"})
@@ -49,7 +54,8 @@ def test_run_cli_chat_prints_tool_chain_and_reply(monkeypatch, tmp_path, capsys)
 
 def test_run_cli_chat_announces_a_tool_before_it_runs(monkeypatch, tmp_path, capsys):
     def fake_run_agent_turn(
-        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages,
+        plan_mode=False, ask_user=None,
     ):
         on_event(
             TurnEvent(phase="tool_start", step=1, name="read_file", arguments={"path": "a.txt"})
@@ -67,7 +73,8 @@ def test_run_cli_chat_persists_session_across_calls(monkeypatch, tmp_path):
     calls = []
 
     def fake_run_agent_turn(
-        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages,
+        plan_mode=False, ask_user=None,
     ):
         calls.append(list(messages))
         messages.append({"role": "user", "content": text})
@@ -134,7 +141,8 @@ def test_run_cli_shell_prints_output_and_exit_code(monkeypatch, tmp_path, capsys
 
 def test_run_cli_chat_indents_nested_subagent_calls(monkeypatch, tmp_path, capsys):
     def fake_run_agent_turn(
-        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages,
+        plan_mode=False, ask_user=None,
     ):
         on_event(
             TurnEvent(
@@ -162,7 +170,8 @@ def test_run_cli_chat_frames_a_delegation_with_a_header_and_footer(monkeypatch, 
     output = "notes.txt mentions retry\n[researcher · 4.1s · 3/8 steps · 360 tok · via read_files]"
 
     def fake_run_agent_turn(
-        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages,
+        plan_mode=False, ask_user=None,
     ):
         args = {"task": "which file mentions retry", "role": "researcher"}
         on_event(
@@ -189,7 +198,8 @@ def test_run_cli_chat_frames_a_delegation_with_a_header_and_footer(monkeypatch, 
 
 def test_run_cli_chat_previews_nested_tool_output(monkeypatch, tmp_path, capsys):
     def fake_run_agent_turn(
-        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages,
+        plan_mode=False, ask_user=None,
     ):
         on_event(
             TurnEvent(
@@ -230,7 +240,8 @@ def test_run_cli_passes_plan_mode_to_the_agent_turn(monkeypatch, tmp_path):
     seen = []
 
     def fake_run_agent_turn(
-        call_llm_fn, text, sandbox_root, override_config, on_event, messages, plan_mode=False
+        call_llm_fn, text, sandbox_root, override_config, on_event, messages,
+        plan_mode=False, ask_user=None,
     ):
         seen.append(plan_mode)
         return "planned"
@@ -238,3 +249,46 @@ def test_run_cli_passes_plan_mode_to_the_agent_turn(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "run_agent_turn", fake_run_agent_turn)
     cli.run_cli("plan it", sandbox_root=tmp_path, session_path=tmp_path / "s.json", plan_mode=True)
     assert seen == [True]
+
+
+@pytest.mark.parametrize("typed, expected", [("2", "PostgreSQL"), ("Redis", "Redis")])
+def test_cli_question_answer_is_returned_to_agent_and_persisted(
+    tmp_path, monkeypatch, capsys, typed, expected,
+):
+    answers = []
+
+    def fake_llm(messages, override_config=None, tools=None):
+        if messages[-1]["role"] == "tool":
+            answers.append(json.loads(messages[-1]["content"]))
+            return {"status": "success", "content": "Aligned"}
+        return {"status": "success", "content": "", "tool_calls": [{
+            "id": "question", "type": "function",
+            "function": {"name": "ask_user_question", "arguments": json.dumps({
+                "question": "Which storage?", "options": ["SQLite", "PostgreSQL"],
+            })},
+        }]}
+
+    monkeypatch.setattr(cli, "call_llm", fake_llm)
+    monkeypatch.setattr("builtins.input", lambda *args: typed)
+    session = tmp_path / "session.json"
+    cli.run_cli("plan storage", sandbox_root=tmp_path, session_path=session, plan_mode=True)
+    assert answers == [{"question": "Which storage?", "answer": expected}]
+    saved = json.loads(session.read_text())
+    assert any(m.get("role") == "tool" and expected in m["content"] for m in saved)
+    output = capsys.readouterr().out
+    assert "Which storage?" in output
+    assert "PostgreSQL" in output
+
+
+def test_cli_question_reprompts_blank_and_invalid_choice(monkeypatch):
+    replies = iter([" ", "9", "1"])
+    monkeypatch.setattr("builtins.input", lambda *args: next(replies))
+    assert cli.ask_user_question("Storage?", ["SQLite"]) == "SQLite"
+
+
+def test_cli_question_handles_end_of_input(monkeypatch):
+    def end_of_input(*args):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", end_of_input)
+    assert cli.ask_user_question("Storage?", []) is None

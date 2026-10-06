@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from ratchet.agent.config import load_config
-from ratchet.agent.context import AgentContext
+from ratchet.agent.context import AgentContext, QuestionHandler
 from ratchet.agent.events import TurnEvent, TurnResult
 from ratchet.agent.plan import (
     PLAN_MODE_NOTE,
@@ -117,6 +117,7 @@ def run_turn(
     depth: int = 0,
     agent: str = "",
     plan_mode: bool = False,
+    ask_user: QuestionHandler | None = None,
 ) -> TurnResult:
     if messages is None:
         messages = [{"role": "system", "content": system_prompt or SYSTEM_PROMPT}]
@@ -142,6 +143,7 @@ def run_turn(
         depth=depth,
         plan_mode=plan_mode,
         allowed_tools=frozenset(schema["function"]["name"] for schema in tools_schema),
+        ask_user=ask_user,
     )
     started = time.monotonic()
     tools_used: list[str] = []
@@ -251,6 +253,8 @@ def run_agent_turn(
     on_event: Callable[[TurnEvent], None] | None = None,
     messages: list[dict] | None = None,
     plan_mode: bool = False,
+    *,
+    ask_user: QuestionHandler | None = None,
 ) -> str:
     return run_turn(
         call_llm_fn,
@@ -260,4 +264,5 @@ def run_agent_turn(
         on_event,
         messages,
         plan_mode=plan_mode,
+        ask_user=ask_user,
     ).text

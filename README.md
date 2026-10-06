@@ -90,11 +90,24 @@ Plan mode allows inspection and plan creation, while blocking workspace edits an
 Plans are saved inside the sandbox as `PLAN.json` and a readable `PLAN.md` checklist.
 Toggle it in the TUI with `Ctrl+B`.
 
+The TUI restores the active plan at startup in a scrollable side panel.
+Plan creation, retrieval, and status updates refresh the panel and print progress cards in both frontends.
+Cards show step IDs, statuses, target files, notes, risks, and the completed-step percentage.
+Updates from delegated planners appear alongside parent-agent updates.
+
 Planning can delegate inspection to `researcher` and `planner` subagents.
 Planners inspect architecture and save structured plans without executing them.
 Only researchers may run in parallel during planning; planners save shared plan files sequentially.
 Child turns inherit plan-mode restrictions and enforce their role's tool permissions at runtime.
 Delegated agents cannot invoke tools outside their role or spawn further subagents.
+
+`ask_user_question` pauses the agent for a clarifying answer, including inside planner subagents.
+The CLI accepts a numbered option or custom text; Ctrl+C cancels the question.
+The TUI shows a question dialog with choices and a custom-answer field; Escape cancels.
+Answers return to the asking agent's tool history; top-level answers persist with the conversation.
+Planner answers stay in the planner's isolated history and inform its returned summary.
+Cancelled questions, blank answers, and unavailable interactive handlers return errors without defaults.
+Parallel researchers cannot ask interactive questions; they report ambiguities to the parent agent.
 
 `create_plan` accepts string steps or structured steps with IDs, descriptions, target files,
 notes, and statuses, plus an optional summary and risks.

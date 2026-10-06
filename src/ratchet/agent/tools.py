@@ -12,6 +12,7 @@ from ratchet.agent.plan import (
     get_plan,
     update_plan_step,
 )
+from ratchet.agent.questions import ask_user_question
 from ratchet.agent.web import (
     DEFAULT_MAX_RESULTS,
     MAX_RESULTS_LIMIT,
@@ -445,6 +446,24 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "ask_user_question",
+            "description": (
+                "Ask a clarifying question and wait for the user's answer. "
+                "Offer optional choices or custom text. Never assume an answer if cancelled."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "spawn_subagent",
             "description": (
                 "Delegate one self-contained sub-task to a focused subagent, blocking "
@@ -581,6 +600,8 @@ def _dispatch(name: str, arguments: dict, ctx: AgentContext) -> dict[str, str | 
         )
     elif name == "get_plan":
         result = get_plan(sandbox_root)
+    elif name == "ask_user_question":
+        result = ask_user_question(ctx, arguments.get("question", ""), arguments.get("options"))
     elif name == "update_plan_step":
         result = update_plan_step(
             sandbox_root, arguments.get("step_id"), arguments.get("status"),

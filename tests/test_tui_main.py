@@ -3,11 +3,68 @@ import re
 
 import pytest
 from textual.events import Paste
-from textual.widgets import Footer, Header, RichLog
+from textual.widgets import Footer, Header, Input, OptionList, RichLog
 
 from ratchet.agent import config as agent_config
 from ratchet.tui import main as tui_main
 from ratchet.tui.main import PromptInput, RatchetApp
+
+
+@pytest.mark.parametrize("answer_mode, expected", [
+    ("option", "PostgreSQL"), ("custom", "Redis"), ("free", "Redis"), ("cancel", None),
+])
+async def test_question_modal_pauses_turn_and_returns_answer(
+    tmp_path, monkeypatch, answer_mode, expected,
+):
+    answers = []
+
+    def fake_llm(messages, override_config=None, tools=None):
+        if messages[-1]["role"] == "tool":
+            answers.append(messages[-1]["content"])
+            return {"status": "success", "content": "Question handled"}
+        return {"status": "success", "content": "", "tool_calls": [{
+            "id": "question", "type": "function",
+            "function": {"name": "ask_user_question", "arguments": json.dumps({
+                "question": "Which storage?",
+                "options": [] if answer_mode == "free" else ["SQLite", "PostgreSQL"],
+            })},
+        }]}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_llm)
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+b")
+        prompt = app.query_one("#message_input", PromptInput)
+        prompt.text = "plan storage"
+        await pilot.press("enter")
+        for _ in range(100):
+            if isinstance(app.screen, tui_main.QuestionScreen):
+                break
+            await pilot.pause(0.01)
+        assert isinstance(app.screen, tui_main.QuestionScreen)
+        assert not answers
+        if answer_mode == "option":
+            options = app.screen.query_one(OptionList)
+            options.focus()
+            await pilot.press("down", "enter")
+        elif answer_mode in ("custom", "free"):
+            answer = app.screen.query_one("#question_answer", Input)
+            answer.focus()
+            answer.value = " "
+            await pilot.press("enter")
+            assert isinstance(app.screen, tui_main.QuestionScreen)
+            answer.value = "Redis"
+            await pilot.press("enter")
+        else:
+            await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        assert not isinstance(app.screen, tui_main.QuestionScreen)
+        assert app.is_running
+    assert len(answers) == 1
+    if expected is None:
+        assert "cancelled" in answers[0].lower()
+    else:
+        assert json.loads(answers[0]) == {"question": "Which storage?", "answer": expected}
 
 TEST_CONFIG_TOML = """
 [model]
@@ -24,6 +81,33 @@ name = "anthropic/claude-sonnet-5"
 name = "liquid/lfm2.5-1.2b"
 base_url = "http://localhost:1234/v1"
 """
+
+
+async def test_quitting_with_a_pending_question_releases_the_frontend_waiter(tmp_path, monkeypatch):
+    def fake_llm(messages, override_config=None, tools=None):
+        if messages[-1]["role"] == "tool":
+            return {"status": "success", "content": "Stopped"}
+        return {"status": "success", "content": "", "tool_calls": [{
+            "id": "question", "type": "function",
+            "function": {"name": "ask_user_question", "arguments": '{"question": "Storage?"}'},
+        }]}
+
+    monkeypatch.setattr(tui_main, "call_llm", fake_llm)
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#message_input", PromptInput)
+        prompt.text = "design storage"
+        await pilot.press("enter")
+        for _ in range(100):
+            if isinstance(app.screen, tui_main.QuestionScreen):
+                break
+            await pilot.pause(0.01)
+        assert isinstance(app.screen, tui_main.QuestionScreen)
+        pending = app._question_future
+        assert pending is not None and not pending.done()
+        await pilot.press("ctrl+q")
+    assert pending.done()
+    assert not app.is_running
 
 
 def make_app(tmp_path):

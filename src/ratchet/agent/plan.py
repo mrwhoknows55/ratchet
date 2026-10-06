@@ -21,12 +21,15 @@ PLAN_MODE_TOOLS = {
     "get_plan",
     "spawn_subagent",
     "spawn_parallel_subagent",
+    "ask_user_question",
 }
 
 PLAN_MODE_NOTE = (
     "[Plan mode] Read-only: you cannot edit workspace files or run commands. "
     "Delegate inspection to researcher or planner subagents; only researchers may run "
     "in parallel. Planners may save plans but cannot execute them. "
+    "Use ask_user_question to resolve requirements that materially change the design "
+    "before saving the plan. If no answer is available, report the unresolved question. "
     "Inspect what you need, then save the plan with create_plan and summarise it."
 )
 

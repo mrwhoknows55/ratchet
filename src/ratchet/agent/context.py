@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+QuestionHandler = Callable[[str, list[str]], str | None]
+
 
 @dataclass(frozen=True)
 class AgentContext:
@@ -12,6 +14,7 @@ class AgentContext:
     depth: int = 0
     plan_mode: bool = False
     allowed_tools: frozenset[str] | None = None
+    ask_user: QuestionHandler | None = None
 
 
 def as_context(value: "AgentContext | Path") -> "AgentContext":

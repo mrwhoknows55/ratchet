@@ -41,6 +41,7 @@ ROLE_TOOLS = {
     "researcher": [*_READ_TOOLS, "check_command", "search_web", "fetch_url"],
     "planner": [
         *_READ_TOOLS, "check_command", "search_web", "fetch_url", "create_plan", "get_plan",
+        "ask_user_question",
     ],
     "coder": [
         *_READ_TOOLS,
@@ -164,6 +165,7 @@ def spawn_subagent(
         depth=ctx.depth + 1,
         agent=role_name,
         plan_mode=ctx.plan_mode or role_name == "planner",
+        ask_user=ctx.ask_user,
     )
 
     meta = _metadata_line(role_name, result, budget)

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 import traceback
 from datetime import datetime
@@ -6,12 +7,14 @@ from pathlib import Path
 
 from rich.markup import escape
 from rich.panel import Panel
+from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, OptionList, RichLog, Static, TextArea
+from textual.widgets import Footer, Header, Input, OptionList, RichLog, Static, TextArea
 from textual.widgets.option_list import Option
 
 from ratchet.agent.client import call_llm
@@ -19,6 +22,7 @@ from ratchet.agent.config import load_config
 from ratchet.agent.events import TurnEvent
 from ratchet.agent.loop import DEFAULT_MAX_STEPS, run_agent_turn
 from ratchet.agent.models import load_supported_models
+from ratchet.agent.plan import PLAN_JSON_FILE, get_plan
 from ratchet.agent.subagent import normalize_role
 from ratchet.agent.tools import (
     SYSTEM_PROMPT,
@@ -42,14 +46,23 @@ _SINGULAR = {"entries": "entry", "files": "file", "matches": "match", "results":
              "lines": "line"}
 ARGS_WIDTH = 80
 NAME_WIDTH = 14
-ARG_KEYS = ("command", "query", "url", "path", "pattern", "task", "name")
+ARG_KEYS = ("command", "query", "url", "path", "pattern", "task", "name", "question")
 SPAWN_TOOL = "spawn_subagent"
 SPAWN_TOOLS = {SPAWN_TOOL, "spawn_parallel_subagent"}
+PLAN_TOOLS = {"create_plan", "get_plan", "update_plan_step"}
+PLAN_STATUS_COLOURS = {
+    "pending": "dim",
+    "in_progress": "yellow",
+    "completed": "green",
+    "skipped": "dim",
+    "failed": "red",
+}
 ROLE_COLOURS = {
     "researcher": "cyan",
     "coder": "yellow",
     "tester": "magenta",
     "generalist": "white",
+    "planner": "blue",
 }
 
 
@@ -233,6 +246,42 @@ def format_ack_panel(message: str) -> Panel:
     return Panel(f"[green]✓ {escape(message)}[/green]", border_style="green", expand=False)
 
 
+def format_plan_panel(payload: dict) -> Panel:
+    data = payload["plan"]
+    progress = payload["progress"]
+    body = Text()
+    body.append(data["title"], style="bold")
+    body.append(
+        f"\nProgress: {progress['completed']}/{progress['total']} completed "
+        f"({progress['percent']:.1f}%)\n",
+        style="cyan",
+    )
+    if data["summary"]:
+        body.append(f"\n{data['summary']}\n")
+    for step in data["steps"]:
+        body.append(f"\n{step['id']}. {step['description']} — ")
+        body.append(step["status"], style=PLAN_STATUS_COLOURS[step["status"]])
+        if step["target_files"]:
+            body.append("\n  Files: " + ", ".join(step["target_files"]), style="dim")
+        if step["notes"]:
+            body.append(f"\n  Notes: {step['notes']}", style="dim")
+    if data["risks"]:
+        body.append("\n\nRisks", style="bold")
+        for risk in data["risks"]:
+            body.append(f"\n  • {risk}")
+    complete = progress["completed"] == progress["total"]
+    return Panel(body, title="Active plan", border_style="green" if complete else "cyan")
+
+
+def plan_panel_for_event(event: TurnEvent, root: Path) -> Panel | None:
+    if event.phase != "tool_done" or event.exit_code != 0 or event.name not in PLAN_TOOLS:
+        return None
+    result = get_plan(root)
+    if result["exit_code"] != 0:
+        return None
+    return format_plan_panel(json.loads(result["stdout"]))
+
+
 def _log_name(event: TurnEvent) -> str:
     return f"[{event.agent}] {event.name}" if event.agent else event.name
 
@@ -364,12 +413,82 @@ class ModelPickerScreen(ModalScreen[str]):
         self.dismiss(event.option_id)
 
 
+class QuestionScreen(ModalScreen[str | None]):
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    DEFAULT_CSS = """
+    QuestionScreen {
+        align: center middle;
+        background: $background 70%;
+    }
+    QuestionScreen #question_dialog {
+        width: 72;
+        max-width: 95%;
+        height: auto;
+        max-height: 90%;
+        padding: 1 2;
+        border: round $accent;
+        background: $surface;
+    }
+    QuestionScreen Static {
+        height: auto;
+        margin-bottom: 1;
+    }
+    QuestionScreen OptionList {
+        height: auto;
+        max-height: 10;
+        margin-bottom: 1;
+    }
+    """
+
+    def __init__(self, question: str, options: list[str]) -> None:
+        super().__init__()
+        self.question = question
+        self.options = options
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="question_dialog"):
+            yield Static(self.question, markup=False)
+            if self.options:
+                yield OptionList(*(Option(escape(option)) for option in self.options))
+            yield Input(placeholder="Enter a custom answer", id="question_answer")
+            yield Static("Enter to answer · Tab to type a custom answer · Escape to cancel")
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList if self.options else Input).focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(self.options[event.option_index])
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        answer = event.value.strip()
+        if answer:
+            self.dismiss(answer)
+        else:
+            self.notify("Please provide an answer.", severity="warning")
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class RatchetApp(App):
     ENABLE_COMMAND_PALETTE = False
 
     CSS = """
-    #messages {
+    #conversation {
         height: 1fr;
+    }
+
+    #messages {
+        width: 1fr;
+        height: 1fr;
+    }
+
+    #active_plan {
+        display: none;
+        width: 40%;
+        height: 1fr;
+        border-left: solid $accent;
+        padding: 0 1;
     }
 
     #status {
@@ -406,6 +525,8 @@ class RatchetApp(App):
         self.session_path = session_path or (log_path.parent / "session.json")
         self.selected_model: dict[str, str] | None = None
         self.plan_mode = False
+        self._question_lock = asyncio.Lock()
+        self._question_future: asyncio.Future | None = None
         self._parent_step = 0
         self.messages: list[dict] = load_session(self.session_path) or [
             {"role": "system", "content": SYSTEM_PROMPT}
@@ -413,7 +534,10 @@ class RatchetApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield RichLog(id="messages", markup=True)
+        with Horizontal(id="conversation"):
+            yield RichLog(id="messages", markup=True)
+            with VerticalScroll(id="active_plan"):
+                yield Static(id="plan_content", markup=False)
         yield StatusBar(id="status")
         yield PromptInput(id="message_input")
         yield Footer()
@@ -421,6 +545,7 @@ class RatchetApp(App):
     def on_mount(self) -> None:
         self.sub_title = "shell mode" if self.mode == "shell" else ""
         self._write_log("app launched")
+        self._refresh_active_plan()
         if self.mode != "shell":
             model_name = load_config().get("model", {}).get("name", "unknown")
             message = f"model: {model_name}"
@@ -429,6 +554,8 @@ class RatchetApp(App):
         self.query_one("#message_input", PromptInput).focus()
 
     def on_unmount(self) -> None:
+        if self._question_future is not None and not self._question_future.done():
+            self._question_future.set_result(None)
         self._write_log("app stopped")
 
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
@@ -461,6 +588,9 @@ class RatchetApp(App):
                     lambda event: self.call_from_thread(self._on_turn_event, event),
                     self.messages,
                     plan_mode=self.plan_mode,
+                    ask_user=lambda question, options: self.call_from_thread(
+                        self._ask_user_question, question, options
+                    ),
                 )
                 log_message = f"assistant: {reply}"
                 await asyncio.to_thread(save_session, self.messages, self.session_path)
@@ -473,6 +603,47 @@ class RatchetApp(App):
         panel = format_error_panel(reply) if reply.startswith("[") else format_reply_panel(reply)
         self.query_one("#messages", RichLog).write(panel)
         self._write_log(log_message)
+
+    async def _ask_user_question(self, question: str, options: list[str]) -> str | None:
+        async with self._question_lock:
+            future = asyncio.get_running_loop().create_future()
+            self._question_future = future
+
+            def answered(answer: str | None) -> None:
+                if not future.done():
+                    future.set_result(answer)
+
+            try:
+                await self.push_screen(QuestionScreen(question, options), answered)
+                return await future
+            finally:
+                self._question_future = None
+
+    def _refresh_active_plan(self, card: Panel | None = None) -> None:
+        view = self.query_one("#active_plan", VerticalScroll)
+        content = self.query_one("#plan_content", Static)
+        if self.mode == "shell":
+            view.display = False
+            return
+        if card is None:
+            result = get_plan(self.sandbox_root)
+            if result["exit_code"] == 0:
+                card = format_plan_panel(json.loads(result["stdout"]))
+            else:
+                path = self.sandbox_root / PLAN_JSON_FILE
+                if path.exists() or path.is_symlink():
+                    content.update(Panel(
+                        Text(f"Cannot load active plan\n{result['stderr']}"), border_style="red"
+                    ))
+                    view.display = True
+                else:
+                    content.update(Text(
+                        "No active plan\nSubmit a goal to create a structured plan."
+                    ))
+                    view.display = self.plan_mode
+                return
+        content.update(card)
+        view.display = True
 
     def _on_turn_event(self, event: TurnEvent) -> None:
         max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
@@ -494,7 +665,11 @@ class RatchetApp(App):
             self._write_log(format_call_log_line(event))
             return
         status.set_step(self._parent_step, max_steps)
-        if event.name in SPAWN_TOOLS and not event.depth:
+        plan_card = plan_panel_for_event(event, self.sandbox_root)
+        if plan_card is not None:
+            self._refresh_active_plan(plan_card)
+            messages_widget.write(plan_card)
+        elif event.name in SPAWN_TOOLS and not event.depth:
             messages_widget.write(format_delegation_footer(event))
         elif event.depth:
             messages_widget.write(format_tool_result_block(event))
@@ -524,6 +699,7 @@ class RatchetApp(App):
 
     def action_toggle_plan_mode(self) -> None:
         self.plan_mode = not self.plan_mode
+        self._refresh_active_plan()
         self.sub_title = "plan mode" if self.plan_mode else ""
         message = "Plan mode on: read-only." if self.plan_mode else "Plan mode off."
         self.query_one("#messages", RichLog).write(format_ack_panel(message))
