@@ -9,9 +9,11 @@ from ratchet.agent.config import load_config
 from ratchet.agent.context import AgentContext, QuestionHandler
 from ratchet.agent.events import TurnEvent, TurnResult
 from ratchet.agent.plan import (
+    PLAN_EXECUTION_NOTE,
     PLAN_MODE_NOTE,
     PLAN_MODE_TOOLS,
     blocked_in_plan_mode,
+    get_plan,
     plan_mode_schemas,
 )
 from ratchet.agent.subagent import PARALLEL_SPAWN_TOOL, max_parallel
@@ -121,19 +123,23 @@ def run_turn(
 ) -> TurnResult:
     if messages is None:
         messages = [{"role": "system", "content": system_prompt or SYSTEM_PROMPT}]
-    if plan_mode:
-        user_text = f"{PLAN_MODE_NOTE}\n\n{user_text}"
-    messages.append({"role": "user", "content": user_text})
     if max_steps is None:
         max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
     if tools_schema is None:
         tools_schema = TOOL_SCHEMAS
+    execution_note = False
     if plan_mode:
         allowed_names = {schema["function"]["name"] for schema in tools_schema}
         tools_schema = [
             schema for schema in plan_mode_schemas()
             if schema["function"]["name"] in allowed_names
         ]
+        user_text = f"{PLAN_MODE_NOTE}\n\n{user_text}"
+    elif depth == 0:
+        tool_names = {schema["function"]["name"] for schema in tools_schema}
+        if {"get_plan", "update_plan_step"} <= tool_names:
+            execution_note = get_plan(sandbox_root)["exit_code"] == 0
+    messages.append({"role": "user", "content": user_text})
 
     ctx = AgentContext(
         sandbox_root=sandbox_root,
@@ -155,12 +161,22 @@ def run_turn(
     for step in range(1, max_steps + 1):
         if on_event:
             on_event(TurnEvent(phase="thinking", step=step, depth=depth, agent=agent))
-        result = call_llm_fn(messages, override_config, tools=tools_schema)
+        request_messages = messages
+        if execution_note:
+            request_messages = [{"role": "system", "content": PLAN_EXECUTION_NOTE}, *messages]
+        result = call_llm_fn(request_messages, override_config, tools=tools_schema)
 
         usage = result.get("usage")
         if usage:
             prompt_tokens = (prompt_tokens or 0) + usage.get("prompt_tokens", 0)
             completion_tokens = (completion_tokens or 0) + usage.get("completion_tokens", 0)
+            if on_event:
+                on_event(TurnEvent(
+                    phase="usage", step=step, depth=depth, agent=agent,
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    context_window=result.get("context_window"),
+                ))
 
         if result["status"] != "success":
             return TurnResult(

@@ -31,6 +31,7 @@ from ratchet.agent.tools import (
     save_session,
 )
 from ratchet.shell.executor import run_command
+from ratchet.tui.tokens import TokenMeter
 
 DEFAULT_LOG_PATH = Path("log/ratchet.log")
 SUMMARY_WIDTH = 100
@@ -497,6 +498,12 @@ class RatchetApp(App):
         color: $text-muted;
     }
 
+    #tokens {
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+    }
+
     #message_input {
         height: auto;
         max-height: 12;
@@ -539,6 +546,7 @@ class RatchetApp(App):
             with VerticalScroll(id="active_plan"):
                 yield Static(id="plan_content", markup=False)
         yield StatusBar(id="status")
+        yield TokenMeter(id="tokens")
         yield PromptInput(id="message_input")
         yield Footer()
 
@@ -546,6 +554,9 @@ class RatchetApp(App):
         self.sub_title = "shell mode" if self.mode == "shell" else ""
         self._write_log("app launched")
         self._refresh_active_plan()
+        meter = self.query_one("#tokens", TokenMeter)
+        meter.display = self.mode != "shell"
+        meter.reset_context(load_config().get("model", {}).get("context_window"))
         if self.mode != "shell":
             model_name = load_config().get("model", {}).get("name", "unknown")
             message = f"model: {model_name}"
@@ -646,6 +657,9 @@ class RatchetApp(App):
         view.display = True
 
     def _on_turn_event(self, event: TurnEvent) -> None:
+        if event.phase == "usage":
+            self.query_one("#tokens", TokenMeter).record(event)
+            return
         max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
         status = self.query_one("#status", StatusBar)
         messages_widget = self.query_one("#messages", RichLog)
@@ -694,6 +708,7 @@ class RatchetApp(App):
         messages_widget.clear()
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         clear_session(self.session_path)
+        self.query_one("#tokens", TokenMeter).reset_session()
         messages_widget.write(format_ack_panel("Memory reset."))
         self._write_log("memory reset")
 
@@ -715,6 +730,9 @@ class RatchetApp(App):
         if not alias:
             return
         self.selected_model = models[alias]
+        self.query_one("#tokens", TokenMeter).reset_context(
+            self.selected_model.get("context_window")
+        )
         message = f"model set to {self.selected_model['name']}"
         self.query_one("#messages", RichLog).write(escape(message))
         self._write_log(message)

@@ -41,6 +41,15 @@ EXECUTE_PLAN_PROMPT = (
     "update_plan_step. Do not edit the plan files directly."
 )
 
+PLAN_EXECUTION_NOTE = (
+    "[Execution mode] Plan mode is off; previous plan-mode restrictions no longer apply. "
+    "An active structured plan exists. For requested work covered by that plan, "
+    f"{EXECUTE_PLAN_PROMPT} "
+    "Track delegated work too: verify subagent results before completing its plan step. "
+    "Before reporting completion, retrieve the plan again and reconcile step statuses "
+    "with verified results. Do not execute unrelated plan steps."
+)
+
 
 def plan_mode_schemas() -> list[dict]:
     from ratchet.agent.tools import TOOL_SCHEMAS

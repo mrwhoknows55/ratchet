@@ -14,6 +14,9 @@ class TurnEvent:
     depth: int = 0
     agent: str = ""
     lane: int = 0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    context_window: int | None = None
 
 
 @dataclass

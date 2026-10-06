@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from ratchet.agent import config as agent_config
 from ratchet.agent import loop as agent_loop
 from ratchet.agent.events import TurnResult
@@ -154,7 +156,8 @@ def test_plan_mode_blocks_a_mutating_call_the_model_sends_anyway(tmp_path):
     assert "plan mode" in done.output.lower()
 
 
-def test_execute_plan_tracks_a_real_file_change_and_verification(tmp_path):
+@pytest.mark.parametrize("prompt", [EXECUTE_PLAN_PROMPT, "execute"])
+def test_execute_plan_tracks_a_real_file_change_and_verification(tmp_path, prompt):
     create_plan(tmp_path, "Greeting", ["Write greeting"])
     messages = []
     calls = _replies(
@@ -167,7 +170,17 @@ def test_execute_plan_tracks_a_real_file_change_and_verification(tmp_path):
         }, "finish"),
         _final("Executed and verified"),
     )
-    result = agent_loop.run_turn(calls, EXECUTE_PLAN_PROMPT, tmp_path, messages=messages)
+
+    def fake_llm(history, override_config=None, tools=None):
+        request = "\n".join(m["content"] for m in history if m["role"] == "system")
+        assert "get_plan" in request
+        assert "update_plan_step" in request
+        assert "in_progress" in request
+        assert "verification" in request
+        assert next(m["content"] for m in reversed(history) if m["role"] == "user") == prompt
+        return calls(history, override_config, tools=tools)
+
+    result = agent_loop.run_turn(fake_llm, prompt, tmp_path, messages=messages)
     assert result.status == "ok"
     assert (tmp_path / "hello.txt").read_text() == "Hello!"
     outputs = {m["tool_call_id"]: m["content"] for m in messages if m["role"] == "tool"}
@@ -175,6 +188,55 @@ def test_execute_plan_tracks_a_real_file_change_and_verification(tmp_path):
     assert "Hello!" in outputs["verify"]
     assert json.loads(outputs["finish"])["progress"]["percent"] == 100.0
     assert "- [x] Write greeting (completed)" in (tmp_path / "PLAN.md").read_text()
+
+
+def test_execution_after_planning_receives_current_mode_and_tracking_instructions(tmp_path):
+    messages = []
+    agent_loop.run_turn(_replies(
+        _tool_call("create_plan", {"title": "Greeting", "steps": ["Write greeting"]}),
+        _final("Review the plan"),
+    ), "plan greeting", tmp_path, messages=messages, plan_mode=True)
+
+    def fake_llm(history, override_config=None, tools=None):
+        request = history[0]["content"]
+        assert request.startswith("[Execution mode]")
+        assert "[Plan mode] Read-only" in history[1]["content"]
+        assert "get_plan" in request
+        assert "update_plan_step" in request
+        assert "failed" in request
+        assert "delegated" in request
+        assert history[-1] == {"role": "user", "content": "yes execute"}
+        return _final("Ready")
+
+    agent_loop.run_turn(fake_llm, "yes execute", tmp_path, messages=messages)
+    assert not any(m["role"] == "system" for m in messages)
+    assert json.loads((tmp_path / "PLAN.json").read_text())["steps"][0]["status"] == "pending"
+
+
+@pytest.mark.parametrize("state", ["missing", "corrupt", "restricted", "planning", "nested"])
+def test_plan_execution_reminder_respects_plan_state_and_agent_permissions(tmp_path, state):
+    if state == "corrupt":
+        (tmp_path / "PLAN.json").write_text("{broken")
+    elif state != "missing":
+        create_plan(tmp_path, "Greeting", ["Write greeting"])
+    kwargs = {}
+    if state == "restricted":
+        kwargs["tools_schema"] = [{"type": "function", "function": {"name": "read_files"}}]
+    if state == "planning":
+        kwargs["plan_mode"] = True
+    if state == "nested":
+        kwargs["depth"] = 1
+
+    def fake_llm(history, override_config=None, tools=None):
+        request = history[-1]["content"]
+        assert not any("[Execution mode]" in m["content"] for m in history)
+        if state == "planning":
+            assert "[Plan mode]" in request
+        else:
+            assert request == "inspect greeting"
+        return _final("Inspected")
+
+    agent_loop.run_turn(fake_llm, "inspect greeting", tmp_path, **kwargs)
 
 
 def test_run_turn_passes_depth_through_to_the_context(tmp_path, monkeypatch):

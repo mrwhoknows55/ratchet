@@ -75,7 +75,7 @@ def run_cli(
         messages = load_session(path) or [{"role": "system", "content": SYSTEM_PROMPT}]
 
         def on_event(event: TurnEvent) -> None:
-            if event.phase == "thinking":
+            if event.phase in {"thinking", "usage"}:
                 return
             if event.phase == "tool_start":
                 if event.name in SPAWN_TOOLS and not event.depth:

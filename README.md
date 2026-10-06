@@ -125,6 +125,16 @@ Plan mode allows inspection and plan creation, while blocking workspace edits an
 Plans are saved inside the sandbox as `PLAN.json` and a readable `PLAN.md` checklist.
 Toggle it in the TUI with `Ctrl+B`.
 
+The TUI token meter shows the latest parent request's prompt plus output tokens
+against the context window, with a usage bar and percentage.
+It turns yellow at 80% and red at 95%.
+Session tokens accumulate across requests, including subagents, until memory is reset.
+Local LM Studio windows are discovered from the loaded model configuration.
+For other endpoints, set `context_window = 32768` to your actual limit under
+`[model]` or the selected `[models.<alias>]` entry in `config.toml`.
+Unknown limits display as unknown; usage updates when the provider reports tokens.
+Picking a model clears the previous context reading while retaining session usage.
+
 The TUI restores the active plan at startup in a scrollable side panel.
 Plan creation, retrieval, and status updates refresh the panel and print progress cards in both frontends.
 Cards show step IDs, statuses, target files, notes, risks, and the completed-step percentage.
