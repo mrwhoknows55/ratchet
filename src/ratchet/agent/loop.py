@@ -32,6 +32,8 @@ def _execute(name: str, arguments: dict | None, ctx: AgentContext) -> tuple[str,
         return f"[Error] invalid JSON arguments for {name}; resend the call with valid JSON", 1
     if ctx.plan_mode and name not in PLAN_MODE_TOOLS:
         return blocked_in_plan_mode(name), 1
+    if ctx.allowed_tools is not None and name not in ctx.allowed_tools:
+        return f"[Error] {name} is blocked; it is outside this agent's tool permissions", 1
     return execute_tool_result(name, arguments, ctx)
 
 
@@ -123,10 +125,14 @@ def run_turn(
     messages.append({"role": "user", "content": user_text})
     if max_steps is None:
         max_steps = load_config().get("agent", {}).get("max_steps", DEFAULT_MAX_STEPS)
-    if plan_mode:
-        tools_schema = plan_mode_schemas()
-    elif tools_schema is None:
+    if tools_schema is None:
         tools_schema = TOOL_SCHEMAS
+    if plan_mode:
+        allowed_names = {schema["function"]["name"] for schema in tools_schema}
+        tools_schema = [
+            schema for schema in plan_mode_schemas()
+            if schema["function"]["name"] in allowed_names
+        ]
 
     ctx = AgentContext(
         sandbox_root=sandbox_root,
@@ -135,6 +141,7 @@ def run_turn(
         on_event=on_event,
         depth=depth,
         plan_mode=plan_mode,
+        allowed_tools=frozenset(schema["function"]["name"] for schema in tools_schema),
     )
     started = time.monotonic()
     tools_used: list[str] = []

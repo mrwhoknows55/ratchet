@@ -3,6 +3,7 @@ from pathlib import Path
 from ratchet.agent.config import load_config
 from ratchet.agent.context import AgentContext
 from ratchet.agent.events import TurnResult
+from ratchet.agent.plan import PLAN_DELEGATION_ROLES
 from ratchet.agent.tools import TOOL_SCHEMAS
 
 ROLE_PROMPT_DIR = Path(__file__).parent.parent.parent.parent / "prompts" / "roles"
@@ -16,6 +17,8 @@ DEFAULT_MAX_DEPTH = 1
 DEFAULT_MAX_PARALLEL = 4
 
 MUTATING_TOOLS = {
+    "create_plan",
+    "update_plan_step",
     "write_files",
     "replace_in_file",
     "append_file",
@@ -36,6 +39,9 @@ _READ_TOOLS = [
 
 ROLE_TOOLS = {
     "researcher": [*_READ_TOOLS, "check_command", "search_web", "fetch_url"],
+    "planner": [
+        *_READ_TOOLS, "check_command", "search_web", "fetch_url", "create_plan", "get_plan",
+    ],
     "coder": [
         *_READ_TOOLS,
         "write_files",
@@ -127,6 +133,8 @@ def spawn_subagent(
     if ctx.call_llm_fn is None:
         return _error("Error: no LLM client is available to run a subagent.")
 
+    if ctx.plan_mode and (role or "").strip().lower() not in PLAN_DELEGATION_ROLES:
+        return _error("Error: plan mode only permits researcher or planner subagents.")
     role_name = normalize_role(role)
     if parallel and not is_parallel_safe(role_name):
         return _error(
@@ -155,6 +163,7 @@ def spawn_subagent(
         max_steps=budget,
         depth=ctx.depth + 1,
         agent=role_name,
+        plan_mode=ctx.plan_mode or role_name == "planner",
     )
 
     meta = _metadata_line(role_name, result, budget)
