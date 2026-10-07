@@ -33,7 +33,7 @@ async def test_question_modal_pauses_turn_and_returns_answer(
     monkeypatch.setattr(tui_main, "call_llm", fake_llm)
     app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
     async with app.run_test() as pilot:
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+p")
         prompt = app.query_one("#message_input", PromptInput)
         prompt.text = "plan storage"
         await pilot.press("enter")
@@ -373,7 +373,7 @@ async def test_error_reply_content_is_still_displayed(tmp_path, monkeypatch):
         assert any("[API Error] boom" in line for line in lines)
 
 
-async def test_ctrl_b_toggles_plan_mode_for_the_next_turn(tmp_path, monkeypatch):
+async def test_ctrl_p_toggles_build_and_plan_modes_without_submitting(tmp_path, monkeypatch):
     seen = []
 
     def fake_call_llm(messages, override_config=None, tools=None):
@@ -383,18 +383,73 @@ async def test_ctrl_b_toggles_plan_mode_for_the_next_turn(tmp_path, monkeypatch)
     monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        await pilot.press("ctrl+b")
-        assert app.plan_mode
-        assert "plan" in app.sub_title.lower()
+        assert app.title == f"Ratchet - {app.session.id[:8]} - Build Mode"
+        assert app.sub_title == ""
+        assert app.active_bindings["ctrl+p"].binding.description == "Build mode"
         input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
         input_widget.text = "design it"
+        await pilot.press("ctrl+p")
+        assert app.plan_mode
+        assert app.title == f"Ratchet - {app.session.id[:8]} - Plan Mode"
+        binding = app.active_bindings["ctrl+p"].binding
+        assert binding.description == "Plan mode"
+        assert binding.priority
+        assert app.get_key_display(binding) == "^p"
+        assert input_widget.text == "design it"
+        assert seen == []
+        input_widget.focus()
         await pilot.press("enter")
         await app.workers.wait_for_complete()
-        await pilot.press("ctrl+b")
+        assert app.plan_mode
+        await pilot.press("ctrl+p")
         assert not app.plan_mode
-        assert app.sub_title == ""
+        assert app.title == f"Ratchet - {app.session.id[:8]} - Build Mode"
+        assert app.active_bindings["ctrl+p"].binding.description == "Build mode"
+        transcript = "\n".join(line.text for line in app.query_one("#messages", RichLog).lines)
+        assert "Plan mode: read-only." in transcript
+        assert "Build mode." in transcript
+        assert "mode on" not in transcript.lower()
+        assert "mode off" not in transcript.lower()
     assert "write_files" not in seen[0]
+
+
+@pytest.mark.parametrize("key,expected", [
+    ("ctrl+o", "^o"),
+    ("ctrl+p", "^p"),
+])
+def test_shortcuts_use_simple_caret_labels(tmp_path, key, expected):
+    app = make_app(tmp_path)
+    assert app.get_key_display(tui_main.Binding(key, "quit", "Test")) == expected
+
+
+async def test_mode_shortcut_does_not_toggle_while_a_modal_is_open(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+p")
+        assert app.plan_mode
+        await app.push_screen(tui_main.QuestionScreen("Storage?", []))
+        await pilot.press("ctrl+p")
+        assert app.plan_mode
+
+
+async def test_header_session_id_changes_immediately_after_memory_reset(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+p")
+        previous_id = app.session.id
+        await pilot.press("ctrl+r")
+        assert app.session.id != previous_id
+        assert app.title == f"Ratchet - {app.session.id[:8]} - Plan Mode"
+        assert previous_id[:8] not in app.title
+        assert app.sub_title == ""
+
+
+async def test_micro_sign_remains_regular_prompt_text(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.press("µ")
+        assert not app.plan_mode
+        assert app.query_one("#message_input", PromptInput).text == "µ"
 
 
 async def test_turn_exception_is_shown_and_logged_without_crashing(tmp_path, monkeypatch):
@@ -543,7 +598,9 @@ async def test_model_picker_options_show_full_model_names(tmp_path):
 
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        await pilot.press("ctrl+p")
+        assert app.active_bindings["ctrl+o"].binding.description == "Models"
+        assert "ctrl+m" not in app.active_bindings
+        await pilot.press("ctrl+o")
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, ModelPickerScreen)
@@ -565,7 +622,7 @@ async def test_chat_message_after_pick_uses_selected_model_override(tmp_path, mo
     monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
-        await pilot.press("ctrl+p")
+        await pilot.press("ctrl+o")
         await pilot.press("enter")
         assert app.selected_model == {"name": "anthropic/claude-sonnet-5"}
         lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]

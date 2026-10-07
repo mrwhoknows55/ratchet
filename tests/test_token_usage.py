@@ -38,15 +38,13 @@ def test_usage_events_keep_request_counts_separate_from_turn_totals(tmp_path):
     assert result.completion_tokens == 30
 
 
-@pytest.mark.parametrize("used,colour", [(250, "cyan"), (800, "yellow"), (1100, "red")])
-async def test_meter_shows_actual_context_ratio_and_session_total(meter, used, colour):
+@pytest.mark.parametrize("used", [250, 1100])
+async def test_meter_shows_plain_context_and_session_counts(meter, used):
     meter.record(TurnEvent(phase="usage", step=1, prompt_tokens=used - 10,
                            completion_tokens=10, context_window=1000))
     rendered = meter.render_tokens()
-    assert f"{used:,} / 1,000" in rendered.plain
-    assert f"{used / 10:.0f}%" in rendered.plain
-    assert f"session {used:,} tok" in rendered.plain
-    assert any(span.style == colour for span in rendered.spans)
+    assert rendered.plain == f"Context {used:,} / 1,000 · session {used:,} tok"
+    assert rendered.spans == []
 
 
 async def test_subagent_usage_adds_to_session_without_replacing_parent_context(meter):
@@ -63,9 +61,12 @@ async def test_subagent_usage_adds_to_session_without_replacing_parent_context(m
 
 
 async def test_unknown_window_and_model_switch_do_not_show_a_false_percentage(meter):
-    assert "— / unknown" in meter.render_tokens().plain
+    assert "unknown" not in meter.render_tokens().plain
+    assert "/" not in meter.render_tokens().plain
     meter.record(TurnEvent(phase="usage", step=1, prompt_tokens=100, completion_tokens=20))
-    assert "120 / unknown" in meter.render_tokens().plain
+    assert "Context 120 tok" in meter.render_tokens().plain
+    assert "unknown" not in meter.render_tokens().plain
+    assert "/" not in meter.render_tokens().plain
     assert "%" not in meter.render_tokens().plain
     meter.reset_context(4096)
     assert "— / 4,096" in meter.render_tokens().plain
@@ -86,7 +87,7 @@ async def test_live_meter_persists_after_reply_and_resets_with_memory(tmp_path, 
         meter = app.query_one("#tokens", TokenMeter)
         assert meter.display
         assert "1,600 / 8,000" in meter.render_tokens().plain
-        assert "20%" in meter.render_tokens().plain
+        assert "%" not in meter.render_tokens().plain
         assert "session 1,600 tok" in meter.render_tokens().plain
         await pilot.press("ctrl+r")
         assert "— / 8,000" in meter.render_tokens().plain

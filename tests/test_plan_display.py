@@ -110,10 +110,10 @@ async def test_tui_shows_empty_plan_panel_only_while_planning(tmp_path):
     async with app.run_test() as pilot:
         view = app.query_one("#active_plan", VerticalScroll)
         assert not view.display
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+p")
         assert view.display
         assert "No active plan" in str(app.query_one("#plan_content", Static).content)
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+p")
         assert not view.display
 
 

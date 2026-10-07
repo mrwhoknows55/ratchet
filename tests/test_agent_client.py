@@ -7,6 +7,7 @@ from ratchet.agent import config as agent_config
 
 @pytest.fixture(autouse=True)
 def _isolate_config_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_client, "_context_windows", {})
     monkeypatch.setattr(agent_config, "CONFIG_FILE", tmp_path / "config.toml")
     monkeypatch.setattr(agent_config, "ENV_FILE", tmp_path / ".env")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
@@ -239,10 +240,12 @@ def test_usage_includes_the_loaded_context_window_not_the_model_maximum(monkeypa
 
 
 @pytest.mark.parametrize("window,expected", [(32768, 32768), (0, None), (-1, None)])
-def test_remote_context_window_is_configurable_without_metadata_requests(
+def test_remote_context_window_uses_valid_configuration(
     monkeypatch, window, expected,
 ):
     def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": []})
         assert request.url.path == "/api/v1/chat/completions"
         return httpx.Response(200, json={
             "choices": [{"message": {"content": "ok"}}],

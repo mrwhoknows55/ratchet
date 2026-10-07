@@ -42,7 +42,8 @@ EXECUTE_PLAN_PROMPT = (
 )
 
 PLAN_EXECUTION_NOTE = (
-    "[Execution mode] Plan mode is off; previous plan-mode restrictions no longer apply. "
+    "[Build mode] Workspace edits and commands are enabled; "
+    "previous planning restrictions no longer apply. "
     "An active structured plan exists. For requested work covered by that plan, "
     f"{EXECUTE_PLAN_PROMPT} "
     "Track delegated work too: verify subagent results before completing its plan step. "

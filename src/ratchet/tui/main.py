@@ -243,6 +243,11 @@ def format_ack_panel(message: str) -> Panel:
     return Panel(f"[green]✓ {escape(message)}[/green]", border_style="green", expand=False)
 
 
+def format_fallback_panel(event: TurnEvent) -> Panel:
+    text = Text(f"Fallback: {event.arguments['from']} → {event.name}")
+    return Panel(text, border_style="yellow", expand=False)
+
+
 def format_plan_panel(payload: dict) -> Panel:
     data = payload["plan"]
     progress = payload["progress"]
@@ -469,6 +474,7 @@ class QuestionScreen(ModalScreen[str | None]):
 
 class RatchetApp(App):
     ENABLE_COMMAND_PALETTE = False
+    TITLE = "Ratchet"
 
     CSS = """
     #conversation {
@@ -510,8 +516,9 @@ class RatchetApp(App):
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+l", "clear_log", "Clear Log"),
         Binding("ctrl+r", "reset_memory", "Reset Memory"),
-        Binding("ctrl+p", "pick_model", "Pick Model"),
-        Binding("ctrl+b", "toggle_plan_mode", "Plan Mode"),
+        Binding("ctrl+o", "pick_model", "Models", priority=True),
+        Binding("ctrl+p", "toggle_plan_mode(True)", "Build mode", priority=True),
+        Binding("ctrl+p", "toggle_plan_mode(False)", "Plan mode", priority=True),
     ]
 
     def __init__(
@@ -546,7 +553,7 @@ class RatchetApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.sub_title = "shell mode" if self.mode == "shell" else ""
+        self._refresh_mode()
         self._write_log("app launched")
         self._refresh_active_plan()
         meter = self.query_one("#tokens", TokenMeter)
@@ -663,6 +670,11 @@ class RatchetApp(App):
         view.display = True
 
     def _on_turn_event(self, event: TurnEvent) -> None:
+        if event.phase == "fallback":
+            panel = format_fallback_panel(event)
+            self.query_one("#messages", RichLog).write(panel)
+            self._write_log(str(panel.renderable))
+            return
         if event.phase == "usage":
             self.query_one("#tokens", TokenMeter).record(event)
             return
@@ -718,16 +730,35 @@ class RatchetApp(App):
         self.messages = self.session.messages
         self.query_one("#tokens", TokenMeter).reset_session()
         self._refresh_active_plan()
+        self._refresh_mode()
         messages_widget.write(format_ack_panel("Memory reset."))
         self._write_log("memory reset")
 
-    def action_toggle_plan_mode(self) -> None:
-        self.plan_mode = not self.plan_mode
+    def action_toggle_plan_mode(self, plan_mode: bool | None = None) -> None:
+        if self.mode == "shell":
+            return
+        self.plan_mode = not self.plan_mode if plan_mode is None else plan_mode
         self._refresh_active_plan()
-        self.sub_title = "plan mode" if self.plan_mode else ""
-        message = "Plan mode on: read-only." if self.plan_mode else "Plan mode off."
+        self._refresh_mode()
+        message = "Plan mode: read-only." if self.plan_mode else "Build mode."
         self.query_one("#messages", RichLog).write(format_ack_panel(message))
         self._write_log(message.lower())
+
+    def _refresh_mode(self) -> None:
+        label = "Plan Mode" if self.plan_mode else "Build Mode"
+        if self.mode == "shell":
+            label = "Shell Mode"
+        self.title = f"Ratchet - {self.session.id[:8]} - {label}"
+        self.sub_title = ""
+        self.refresh_bindings()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool:
+        if action == "toggle_plan_mode":
+            return (
+                self.mode != "shell" and not isinstance(self.screen, ModalScreen)
+                and (not parameters or parameters[0] != self.plan_mode)
+            )
+        return True
 
     def action_pick_model(self) -> None:
         self._pick_model()

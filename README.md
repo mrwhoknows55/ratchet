@@ -8,6 +8,7 @@ AI harness written in Python for local models via LM Studio.
 - OpenAI-compatible chat completions API client (works with LM Studio and any OpenAI-compatible endpoint)
 - Config via `config.toml`, overridable with `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL` env vars (auto-loaded from a `.env` file if present — see `.env.example`)
 - Offline/error handling when the local server is unreachable or returns an error
+- Automatic model fallback on failed requests, with the selected fallback shown in both frontends
 - Messages logged to file with timestamps, prefixed by `user:` / `assistant:` role
 - Sandboxed shell mode (`uv run ratchet shell`) for running commands scoped to a `./sandbox` directory
 - Headless CLI mode: pass a prompt to skip the TUI and print one turn — `uv run ratchet "list the files"` or `uv run ratchet shell "ls"`
@@ -125,7 +126,9 @@ uv run ratchet --reset
 
 Plan mode allows inspection and plan creation, while blocking workspace edits and commands.
 Plans are saved inside the active session as `PLAN.json` and a readable `PLAN.md` checklist.
-Toggle it in the TUI with `Ctrl+B`.
+Default: Build (edits/commands); Plan is read-only.
+Shortcuts: `^O` models; `^P` Build/Plan.
+Header: `Ratchet - <short sid> - <mode>`; footer shows shortcuts.
 
 `Ctrl+R` creates a fresh UUID session and immediately clears memory, token totals,
 and the active plan display; it is ignored while a turn is running.
@@ -143,14 +146,24 @@ Native structured tool calls take priority, preventing duplicate execution.
 Unreadable or reasoning-only responses receive one repair attempt before returning an error.
 Malformed output and leaked reasoning are not added to conversation history.
 
-The TUI token meter shows the latest parent request's prompt plus output tokens
-against the context window, with a usage bar and percentage.
-It turns yellow at 80% and red at 95%.
+Set `fallback = true` under a `[models.<alias>]` entry to enable it as the fallback.
+GPT-OSS is enabled under `[models.gptoss]` and uses OpenRouter.
+HTTP errors, connection failures, timeouts, and unreadable primary responses trigger one fallback attempt.
+The fallback receives the same conversation and permitted tools, with a visible model-switch notice.
+Its configured endpoint and model are used even when environment variables override the primary.
+Authentication uses its `api_key` when configured, otherwise `OPENAI_API_KEY`.
+If multiple models are enabled, the first different configured endpoint/model is selected.
+If both attempts fail, the error includes both failures.
+
+The TUI shows plain context-used/window and session token counts.
 Session tokens accumulate across requests, including subagents, until memory is reset.
 Local LM Studio windows are discovered from the loaded model configuration.
-For other endpoints, set `context_window = 32768` to your actual limit under
+Remote windows are read from the model catalog, using the response's actual model ID.
+Remote limits are cached; local loaded limits are refreshed after each usage report.
+Where provided, a smaller provider context limit takes precedence over the model maximum.
+You can also set `context_window = 32768` to your actual limit under
 `[model]` or the selected `[models.<alias>]` entry in `config.toml`.
-Unknown limits display as unknown; usage updates when the provider reports tokens.
+Unavailable totals are omitted; usage updates when the provider reports tokens.
 Picking a model clears the previous context reading while retaining session usage.
 
 The TUI restores the active plan at startup in a scrollable side panel.

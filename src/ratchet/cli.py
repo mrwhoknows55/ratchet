@@ -18,6 +18,7 @@ from ratchet.tui.main import (
     format_delegation_footer,
     format_delegation_header,
     format_error_panel,
+    format_fallback_panel,
     format_prompt_panel,
     format_reply_panel,
     format_tool_panel,
@@ -72,6 +73,9 @@ def run_cli(
         messages = session.messages
 
         def on_event(event: TurnEvent) -> None:
+            if event.phase == "fallback":
+                console.print(format_fallback_panel(event))
+                return
             if event.phase == "usage":
                 used = (event.prompt_tokens or 0) + (event.completion_tokens or 0)
                 session.usage["session_tokens"] = (session.usage.get("session_tokens") or 0) + used

@@ -224,7 +224,7 @@ def test_execution_after_planning_receives_current_mode_and_tracking_instruction
 
     def fake_llm(history, override_config=None, tools=None):
         request = history[0]["content"]
-        assert request.startswith("[Execution mode]")
+        assert request.startswith("[Build mode]")
         assert "[Plan mode] Read-only" in history[1]["content"]
         assert "get_plan" in request
         assert "update_plan_step" in request
@@ -254,7 +254,7 @@ def test_plan_execution_reminder_respects_plan_state_and_agent_permissions(tmp_p
 
     def fake_llm(history, override_config=None, tools=None):
         request = history[-1]["content"]
-        assert not any("[Execution mode]" in m["content"] for m in history)
+        assert not any("[Build mode]" in m["content"] for m in history)
         if state == "planning":
             assert "[Plan mode]" in request
         else:

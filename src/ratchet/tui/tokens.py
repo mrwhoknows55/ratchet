@@ -37,16 +37,11 @@ class TokenMeter(Static):
         text = Text("Context ", style="dim")
         used = self.context_tokens
         window = self.context_window
-        colour = "cyan"
-        if used is not None and window:
-            ratio = used / window
-            colour = "red" if ratio >= 0.95 else "yellow" if ratio >= 0.8 else "cyan"
-            filled = min(8, round(ratio * 8))
-            text.append("▰" * filled + "▱" * (8 - filled) + " ", style=colour)
-        text.append(f"{used:,}" if used is not None else "—", style=colour)
-        text.append(f" / {window:,}" if window else " / unknown")
-        if used is not None and window:
-            text.append(f" ({used / window:.0%})", style=colour)
+        text.append(f"{used:,}" if used is not None else "—")
+        if window:
+            text.append(f" / {window:,}")
+        elif used is not None:
+            text.append(" tok")
         session = f"{self.session_tokens:,} tok" if self.session_tokens is not None else "—"
         text.append(f" · session {session}")
         return text

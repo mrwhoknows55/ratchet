@@ -172,6 +172,12 @@ def run_turn(
             request_messages = [{"role": "system", "content": REPAIR_NOTE}, *request_messages]
         result = call_llm_fn(request_messages, override_config, tools=tools_schema)
 
+        if on_event and result.get("fallback_from"):
+            on_event(TurnEvent(
+                phase="fallback", step=step, depth=depth, agent=agent,
+                name=result["model"], arguments={"from": result["fallback_from"]},
+            ))
+
         usage = result.get("usage")
         if usage:
             prompt_tokens = (prompt_tokens or 0) + usage.get("prompt_tokens", 0)
