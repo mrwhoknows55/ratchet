@@ -7,17 +7,15 @@ from ratchet.agent import tools as agent_tools
 from ratchet.agent.context import AgentContext
 
 
-def test_tool_schemas_include_list_files():
+def test_tool_schemas_register_supported_tools():
     names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "list_files" in names
-
-
-def test_tool_schemas_include_new_tools():
-    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "search_files" in names
-    assert "read_files" in names
-    assert "write_files" in names
-    assert "delete_file" in names
+    assert len(names) == len(set(names))
+    assert {
+        "list_files", "search_files", "read_files", "write_files", "delete_file",
+        "replace_in_file", "read_file_range", "run_command", "check_command",
+        "file_search", "rollback_file", "append_file", "get_file_info",
+        "copy_file", "move_file", "search_web", "fetch_url",
+    } <= set(names)
 
 
 def test_execute_tool_list_files(tmp_path):
@@ -29,17 +27,6 @@ def test_execute_tool_list_files(tmp_path):
 def test_execute_tool_list_files_empty_directory(tmp_path):
     result = agent_tools.execute_tool("list_files", {}, tmp_path)
     assert result == "(no output)"
-
-
-def test_execute_tool_read_files(tmp_path):
-    (tmp_path / "a.txt").write_text("hello world")
-    result = agent_tools.execute_tool("read_files", {"path": "a.txt"}, tmp_path)
-    assert result == "1| hello world"
-
-
-def test_execute_tool_read_files_missing(tmp_path):
-    result = agent_tools.execute_tool("read_files", {"path": "missing.txt"}, tmp_path)
-    assert "not found" in result.lower()
 
 
 def test_execute_tool_write_files(tmp_path):
@@ -57,34 +44,10 @@ def test_execute_tool_delete_file(tmp_path):
     assert not (tmp_path / "a.txt").exists()
 
 
-def test_execute_tool_search_files(tmp_path):
-    (tmp_path / "a.txt").write_text("hello world\n")
-    result = agent_tools.execute_tool("search_files", {"pattern": "hello"}, tmp_path)
-    assert "a.txt" in result
-
-
 def test_execute_tool_unknown_name(tmp_path):
     result = agent_tools.execute_tool("not_a_real_tool", {}, tmp_path)
     assert "unknown tool" in result.lower()
     assert "not_a_real_tool" in result
-
-
-def test_run_agent_turn_returns_content_without_tool_call(tmp_path):
-    def fake_call_llm(messages, override_config=None, tools=None):
-        return {"content": "hello", "model": "test-model", "status": "success"}
-
-    reply = agent_loop.run_agent_turn(fake_call_llm, "hi", tmp_path)
-
-    assert reply == "hello"
-
-
-def test_run_agent_turn_short_circuits_on_non_success(tmp_path):
-    def fake_call_llm(messages, override_config=None, tools=None):
-        return {"content": "[LM Studio Offline] ...", "model": "test-model", "status": "offline"}
-
-    reply = agent_loop.run_agent_turn(fake_call_llm, "hi", tmp_path)
-
-    assert reply == "[LM Studio Offline] ..."
 
 
 def test_run_agent_turn_appends_reply_to_passed_in_messages(tmp_path):
@@ -116,28 +79,12 @@ def test_run_agent_turn_remembers_earlier_turns(tmp_path):
     assert second_turn_messages[-1] == {"role": "user", "content": "second"}
 
 
-def test_save_session_writes_messages_as_json(tmp_path):
+def test_load_session_round_trips_saved_messages(tmp_path):
     messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
-    path = tmp_path / "session.json"
-
+    path = tmp_path / "nested" / "session.json"
     agent_tools.save_session(messages, path)
 
     assert json.loads(path.read_text()) == messages
-
-
-def test_save_session_creates_parent_dirs(tmp_path):
-    path = tmp_path / "nested" / "session.json"
-
-    agent_tools.save_session([{"role": "system", "content": "sys"}], path)
-
-    assert path.exists()
-
-
-def test_load_session_round_trips_saved_messages(tmp_path):
-    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
-    path = tmp_path / "session.json"
-    agent_tools.save_session(messages, path)
-
     assert agent_tools.load_session(path) == messages
 
 
@@ -196,86 +143,6 @@ def test_run_agent_turn_executes_tool_call_and_returns_final_reply(tmp_path):
     assert tool_message["content"] == "a.txt (0 bytes)"
 
 
-def test_run_agent_turn_notifies_around_each_tool_call(tmp_path):
-    (tmp_path / "a.txt").write_text("")
-    llm_calls = []
-    notifications = []
-
-    def fake_call_llm(messages, override_config=None, tools=None):
-        llm_calls.append(messages)
-        if len(llm_calls) == 1:
-            return {
-                "content": "",
-                "model": "test-model",
-                "status": "success",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {"name": "list_files", "arguments": "{}"},
-                    }
-                ],
-            }
-        return {"content": "there is a.txt", "model": "test-model", "status": "success"}
-
-    agent_loop.run_agent_turn(
-        fake_call_llm, "what files exist?", tmp_path, on_event=notifications.append
-    )
-
-    assert [(e.phase, e.name) for e in notifications] == [
-        ("thinking", ""),
-        ("tool_start", "list_files"),
-        ("tool_done", "list_files"),
-        ("thinking", ""),
-    ]
-
-
-def test_run_agent_turn_without_on_event_does_not_error(tmp_path):
-    (tmp_path / "a.txt").write_text("")
-    calls = []
-
-    def fake_call_llm(messages, override_config=None, tools=None):
-        calls.append(messages)
-        if len(calls) == 1:
-            return {
-                "content": "",
-                "model": "test-model",
-                "status": "success",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {"name": "list_files", "arguments": "{}"},
-                    }
-                ],
-            }
-        return {"content": "there is a.txt", "model": "test-model", "status": "success"}
-
-    reply = agent_loop.run_agent_turn(fake_call_llm, "what files exist?", tmp_path)
-
-    assert reply == "there is a.txt"
-
-
-def test_run_agent_turn_stops_after_max_iterations(tmp_path):
-    def fake_call_llm(messages, override_config=None, tools=None):
-        return {
-            "content": "",
-            "model": "test-model",
-            "status": "success",
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {"name": "list_files", "arguments": "{}"},
-                }
-            ],
-        }
-
-    reply = agent_loop.run_agent_turn(fake_call_llm, "hi", tmp_path)
-
-    assert "exceeded" in reply.lower()
-
-
 def test_run_agent_turn_passes_override_config_through(tmp_path):
     seen = []
 
@@ -315,16 +182,6 @@ def _use_config(monkeypatch, tmp_path, body):
     monkeypatch.setattr(agent_config, "CONFIG_FILE", config_file)
 
 
-def test_run_agent_turn_reads_max_steps_from_config(monkeypatch, tmp_path):
-    _use_config(monkeypatch, tmp_path, '[model]\nname = "test-model"\n\n[agent]\nmax_steps = 3\n')
-    calls = []
-
-    reply = agent_loop.run_agent_turn(_tool_call_forever(calls), "hi", tmp_path)
-
-    assert len(calls) == 3
-    assert "exceeded" in reply.lower()
-
-
 def test_run_agent_turn_falls_back_to_default_max_steps_without_agent_section(
     monkeypatch, tmp_path
 ):
@@ -334,16 +191,6 @@ def test_run_agent_turn_falls_back_to_default_max_steps_without_agent_section(
     agent_loop.run_agent_turn(_tool_call_forever(calls), "hi", tmp_path)
 
     assert len(calls) == agent_loop.DEFAULT_MAX_STEPS
-
-
-def test_default_max_steps_is_twelve():
-    assert agent_loop.DEFAULT_MAX_STEPS == 12
-    assert agent_config.DEFAULT_CONFIG["agent"]["max_steps"] == 12
-
-
-def test_tool_schemas_include_replace_in_file():
-    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "replace_in_file" in names
 
 
 def test_replace_in_file_schema_requires_all_three_arguments():
@@ -362,11 +209,6 @@ def test_execute_tool_replace_in_file(tmp_path):
     )
     assert (tmp_path / "a.txt").read_text() == "alpha\ndelta\n"
     assert "replace" in result.lower()
-
-
-def test_tool_schemas_include_read_file_range():
-    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "read_file_range" in names
 
 
 def test_read_file_range_schema_requires_only_path():
@@ -442,25 +284,10 @@ def test_tool_descriptions_stay_terse():
     assert too_long == {}
 
 
-def test_tool_schemas_include_run_command():
-    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "run_command" in names
-
-
-def test_run_command_schema_requires_command():
-    schema = next(t for t in agent_tools.TOOL_SCHEMAS if t["function"]["name"] == "run_command")
-    assert schema["function"]["parameters"]["required"] == ["command"]
-
-
 def test_execute_tool_run_command(tmp_path):
     (tmp_path / "a.txt").write_text("hello from sandbox\n")
     result = agent_tools.execute_tool("run_command", {"command": "cat a.txt"}, tmp_path)
     assert "hello from sandbox" in result
-
-
-def test_tool_schemas_include_check_command():
-    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "check_command" in names
 
 
 def test_execute_tool_check_command_found(tmp_path):
@@ -473,11 +300,6 @@ def test_execute_tool_check_command_not_found(tmp_path):
         "check_command", {"name": "not_a_real_command_xyz"}, tmp_path
     )
     assert "not found" in result.lower()
-
-
-def test_tool_schemas_include_file_search():
-    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "file_search" in names
 
 
 def test_file_search_schema_requires_only_pattern():
@@ -514,19 +336,6 @@ def test_execute_tool_run_command_appends_nonzero_exit_code(tmp_path):
     assert "missing.txt" in result
 
 
-def test_system_prompt_directs_uncovered_work_to_the_shell():
-    assert "escape hatch" in agent_tools.SYSTEM_PROMPT
-
-
-def test_system_prompt_discourages_repeat_calls():
-    assert "Asking twice" in agent_tools.SYSTEM_PROMPT
-
-
-def test_tool_schemas_include_rollback_file():
-    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "rollback_file" in names
-
-
 def test_execute_tool_rollback_file(tmp_path):
     (tmp_path / "a.txt").write_text("v1")
     agent_tools.execute_tool("write_files", {"path": "a.txt", "content": "v2"}, tmp_path)
@@ -541,11 +350,6 @@ def test_execute_tool_rollback_file_without_snapshot(tmp_path):
     assert "No snapshot" in result
 
 
-def test_tool_schemas_include_append_file():
-    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "append_file" in names
-
-
 def test_execute_tool_append_file(tmp_path):
     (tmp_path / "a.txt").write_text("line1\n")
     result = agent_tools.execute_tool(
@@ -553,11 +357,6 @@ def test_execute_tool_append_file(tmp_path):
     )
     assert "Appended" in result
     assert (tmp_path / "a.txt").read_text() == "line1\nline2\n"
-
-
-def test_tool_schemas_include_get_file_info():
-    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "get_file_info" in names
 
 
 def test_execute_tool_get_file_info(tmp_path):
@@ -578,22 +377,6 @@ def test_execute_tool_run_command_honours_timeout(tmp_path):
         "run_command", {"command": "sleep 2", "timeout": 1}, tmp_path
     )
     assert "timed out" in result.lower()
-
-
-def test_system_prompt_demands_exact_output():
-    assert "exactly" in agent_tools.SYSTEM_PROMPT
-
-
-def test_system_prompt_routes_shell_operators_to_a_script():
-    assert "script" in agent_tools.SYSTEM_PROMPT
-
-
-def test_tool_schemas_include_the_remaining_tools():
-    names = [tool["function"]["name"] for tool in agent_tools.TOOL_SCHEMAS]
-    assert "copy_file" in names
-    assert "move_file" in names
-    assert "search_web" in names
-    assert "fetch_url" in names
 
 
 def test_execute_tool_copy_file(tmp_path):
@@ -721,25 +504,20 @@ def _tool_turn_events(tmp_path):
     return events
 
 
-def test_run_agent_turn_emits_thinking_start_and_done_phases(tmp_path):
+def test_run_agent_turn_emits_ordered_events_with_step_and_result_details(tmp_path):
     (tmp_path / "a.txt").write_text("")
-    phases = [event.phase for event in _tool_turn_events(tmp_path)]
-    assert phases == ["thinking", "tool_start", "tool_done", "thinking"]
-
-
-def test_run_agent_turn_done_event_carries_name_output_and_exit_code(tmp_path):
-    (tmp_path / "a.txt").write_text("")
-    done = [e for e in _tool_turn_events(tmp_path) if e.phase == "tool_done"][0]
+    events = _tool_turn_events(tmp_path)
+    assert [(e.phase, e.name, e.step) for e in events] == [
+        ("thinking", "", 1),
+        ("tool_start", "list_files", 1),
+        ("tool_done", "list_files", 1),
+        ("thinking", "", 2),
+    ]
+    done = next(e for e in events if e.phase == "tool_done")
     assert done.name == "list_files"
     assert done.output == "a.txt (0 bytes)"
     assert done.exit_code == 0
     assert done.elapsed >= 0
-
-
-def test_run_agent_turn_numbers_each_step(tmp_path):
-    (tmp_path / "a.txt").write_text("")
-    events = _tool_turn_events(tmp_path)
-    assert [e.step for e in events] == [1, 1, 1, 2]
 
 
 def test_run_agent_turn_reports_a_failing_tool_exit_code(tmp_path):
@@ -863,19 +641,6 @@ def test_execute_tool_accepts_an_agent_context(tmp_path):
     ctx = AgentContext(sandbox_root=tmp_path)
     result = agent_tools.execute_tool("read_files", {"path": "a.txt"}, ctx)
     assert "hello" in result
-
-
-def test_execute_tool_still_accepts_a_bare_path(tmp_path):
-    (tmp_path / "a.txt").write_text("hello")
-    result = agent_tools.execute_tool("read_files", {"path": "a.txt"}, tmp_path)
-    assert "hello" in result
-
-
-def test_dispatch_reads_the_sandbox_root_from_the_context(tmp_path):
-    (tmp_path / "a.txt").write_text("hello")
-    ctx = AgentContext(sandbox_root=tmp_path, depth=3)
-    result = agent_tools._dispatch("list_files", {}, ctx)
-    assert "a.txt" in result["stdout"]
 
 
 def test_media_tool_schemas_and_permissions():

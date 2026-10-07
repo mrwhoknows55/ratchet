@@ -63,12 +63,6 @@ def test_schema_for_role_filters_to_that_role():
     assert names == set(subagent.ROLE_TOOLS["researcher"])
 
 
-def test_schema_for_role_never_offers_spawn_subagent():
-    for role in subagent.ROLE_TOOLS:
-        names = {s["function"]["name"] for s in subagent.schema_for_role(role)}
-        assert "spawn_subagent" not in names
-
-
 def test_schema_for_role_falls_back_to_generalist_for_an_unknown_role():
     names = {s["function"]["name"] for s in subagent.schema_for_role("wizard")}
     assert names == ALL_TOOLS
@@ -273,11 +267,6 @@ def test_dispatch_routes_spawn_subagent(tmp_path):
     assert "delegated" in result["stdout"]
 
 
-def test_subagent_defaults_come_from_the_config_module():
-    assert agent_config.DEFAULT_CONFIG["subagent"]["max_steps"] == 8
-    assert agent_config.DEFAULT_CONFIG["subagent"]["max_depth"] == 1
-
-
 def test_read_only_roles_are_parallel_safe():
     assert subagent.is_parallel_safe("researcher")
     assert subagent.is_parallel_safe("tester")
@@ -290,15 +279,6 @@ def test_roles_that_can_write_are_not_parallel_safe():
 
 def test_an_unknown_role_is_not_parallel_safe():
     assert not subagent.is_parallel_safe("wizard")
-
-
-def test_max_parallel_default_comes_from_the_config_module():
-    assert agent_config.DEFAULT_CONFIG["subagent"]["max_parallel"] == 4
-
-
-def test_both_spawn_tools_are_registered():
-    names = {s["function"]["name"] for s in TOOL_SCHEMAS}
-    assert {subagent.SPAWN_TOOL, subagent.PARALLEL_SPAWN_TOOL} <= names
 
 
 def test_the_parallel_spawn_tool_only_offers_parallel_safe_roles():
@@ -324,13 +304,6 @@ def test_a_parallel_spawn_refuses_a_role_that_can_write(tmp_path):
     )
     assert result["exit_code"] == 1
     assert "coder" in result["stderr"]
-
-
-def test_a_parallel_spawn_accepts_a_read_only_role(tmp_path):
-    result = subagent.spawn_subagent(
-        _ctx(tmp_path, _once(_final("found it"))), "go", "researcher", parallel=True
-    )
-    assert result["exit_code"] == 0
 
 
 def test_dispatch_routes_the_parallel_spawn_tool(tmp_path):

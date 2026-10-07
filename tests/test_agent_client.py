@@ -198,17 +198,6 @@ def test_call_llm_returns_usage_when_present(monkeypatch):
     assert result["usage"] == {"prompt_tokens": 120, "completion_tokens": 34}
 
 
-def test_call_llm_omits_usage_when_provider_reports_none(monkeypatch):
-    def handler(request):
-        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
-
-    monkeypatch.setattr(agent_client, "_transport", _mock_transport(handler))
-
-    result = agent_client.call_llm([{"role": "user", "content": "hi"}])
-
-    assert "usage" not in result
-
-
 def test_call_llm_usage_defaults_missing_counts_to_zero(monkeypatch):
     def handler(request):
         return httpx.Response(

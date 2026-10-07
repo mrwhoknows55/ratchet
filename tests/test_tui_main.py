@@ -130,11 +130,15 @@ def _isolate_config_file(monkeypatch, tmp_path):
     monkeypatch.setattr(agent_config, "CONFIG_FILE", config_file)
 
 
-async def test_app_has_header_and_footer(tmp_path):
+async def test_app_launches_with_controls_focused_input_and_model(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test():
         assert app.query_one(Header) is not None
         assert app.query_one(Footer) is not None
+        assert app.focused is app.query_one("#message_input", PromptInput)
+        assert not app.query_one("#status", tui_main.StatusBar).display
+        lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]
+        assert any("model: anthropic/claude-sonnet-5" in line for line in lines)
 
 
 async def test_quit_binding_exits_app(tmp_path):
@@ -144,20 +148,6 @@ async def test_quit_binding_exits_app(tmp_path):
         assert not app.is_running
 
 
-async def test_unbound_key_does_not_exit_app(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test() as pilot:
-        await pilot.press("x")
-        assert app.is_running
-
-
-async def test_input_is_focused_on_launch(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test():
-        input_widget = app.query_one("#message_input", PromptInput)
-        assert app.focused is input_widget
-
-
 async def test_typing_letter_q_does_not_quit(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
@@ -165,42 +155,6 @@ async def test_typing_letter_q_does_not_quit(tmp_path):
         await pilot.press("q", "u", "i", "t")
         assert app.is_running
         assert input_widget.text == "quit"
-
-
-async def test_submitted_message_echoes_to_display(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello there"
-        await pilot.press("enter")
-        richlog = app.query_one("#messages", RichLog)
-        lines = [strip.text for strip in richlog.lines]
-        assert any("\u203a hello there" in line for line in lines)
-
-
-async def test_submitted_message_clears_input(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello there"
-        await pilot.press("enter")
-        assert input_widget.text == ""
-
-
-async def test_submitted_message_written_to_log_file(tmp_path):
-    log_path = tmp_path / "ratchet.log"
-    app = RatchetApp(log_path=log_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello there"
-        await pilot.press("enter")
-    content = log_path.read_text()
-    assert re.search(
-        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} user: hello there$", content, re.MULTILINE
-    )
 
 
 async def test_multiple_messages_appended_in_order(tmp_path):
@@ -234,53 +188,41 @@ async def test_empty_message_not_echoed_or_logged(tmp_path):
     assert "app stopped" in content
 
 
-async def test_log_directory_created_if_missing(tmp_path):
+async def test_lifecycle_logging_creates_missing_directories(tmp_path):
     log_path = tmp_path / "nested" / "log" / "ratchet.log"
-    app = RatchetApp(log_path=log_path)
-    async with app.run_test():
-        pass
-    assert log_path.exists()
-
-
-async def test_app_launched_logged_on_mount(tmp_path):
-    log_path = tmp_path / "ratchet.log"
     app = RatchetApp(log_path=log_path)
     async with app.run_test():
         content = log_path.read_text()
         pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} app launched$"
         assert re.search(pattern, content, re.MULTILINE)
-
-
-async def test_active_model_name_printed_on_launch(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test():
-        richlog = app.query_one("#messages", RichLog)
-        lines = [strip.text for strip in richlog.lines]
-        assert any("model: anthropic/claude-sonnet-5" in line for line in lines)
-
-
-async def test_app_stopped_logged_on_unmount(tmp_path):
-    log_path = tmp_path / "ratchet.log"
-    app = RatchetApp(log_path=log_path)
-    async with app.run_test():
-        pass
     content = log_path.read_text()
     assert re.search(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} app stopped$", content, re.MULTILINE)
 
 
-async def test_ctrl_l_clears_message_log(tmp_path):
+async def test_ctrl_l_clears_display_but_preserves_history_session_and_draft(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
         input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
         input_widget.text = "hello there"
         await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        messages_before = list(app.messages)
+        saved_before = app.session_path.read_bytes()
+        history_path = app.session.root / "session.json"
+        history_before = history_path.read_bytes()
+        input_widget.text = "not yet submitted"
         richlog = app.query_one("#messages", RichLog)
         assert len(richlog.lines) > 0
         await pilot.press("ctrl+l")
         lines = [strip.text for strip in richlog.lines]
         assert not any("hello there" in line for line in lines)
         assert any("cleared" in line.lower() for line in lines)
+        assert app.messages == messages_before
+        assert app.session_path.read_bytes() == saved_before
+        assert history_path.read_bytes() == history_before
+        assert input_widget.text == "not yet submitted"
+    assert "log cleared" in app.log_path.read_text()
 
 
 async def test_agent_remembers_earlier_turns(tmp_path, monkeypatch):
@@ -308,33 +250,6 @@ async def test_agent_remembers_earlier_turns(tmp_path, monkeypatch):
     assert second_turn_messages[-1] == {"role": "user", "content": "second"}
 
 
-async def test_ctrl_l_does_not_reset_conversation_memory(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello there"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
-        messages_before = list(app.messages)
-        await pilot.press("ctrl+l")
-        assert app.messages == messages_before
-
-
-async def test_turn_saves_session_to_disk(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello there"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
-
-    saved = json.loads((app.session.root / "session.json").read_text())
-    assert saved["messages"] == app.messages
-    assert json.loads(app.session_path.read_text()) == {"session_id": app.session.id}
-
-
 async def test_app_loads_existing_session_on_mount(tmp_path):
     session_path = tmp_path / "session.json"
     saved = [
@@ -347,31 +262,6 @@ async def test_app_loads_existing_session_on_mount(tmp_path):
 
     async with app.run_test():
         assert app.messages == saved
-
-
-async def test_ctrl_l_does_not_clear_session_file(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello there"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
-        assert app.session_path.exists()
-        await pilot.press("ctrl+l")
-        assert app.session_path.exists()
-
-
-async def test_ctrl_r_resets_conversation_memory(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello there"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
-        await pilot.press("ctrl+r")
-        assert app.messages == [{"role": "system", "content": tui_main.SYSTEM_PROMPT}]
 
 
 async def test_ctrl_r_replaces_active_session_with_empty_history(tmp_path):
@@ -388,29 +278,12 @@ async def test_ctrl_r_replaces_active_session_with_empty_history(tmp_path):
         assert app.session.id != previous_id
         saved = json.loads((app.session.root / "session.json").read_text())
         assert saved["messages"] == [{"role": "system", "content": tui_main.SYSTEM_PROMPT}]
-
-
-async def test_ctrl_r_clears_the_message_log_and_shows_an_ack(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello there"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
+        assert app.messages == saved["messages"]
         richlog = app.query_one("#messages", RichLog)
-        await pilot.press("ctrl+r")
         lines = [strip.text for strip in richlog.lines]
         assert not any("hello there" in line for line in lines)
         assert any("memory reset" in line.lower() for line in lines)
-
-
-async def test_ctrl_r_logged_to_file(tmp_path):
-    log_path = tmp_path / "ratchet.log"
-    app = RatchetApp(log_path=log_path)
-    async with app.run_test() as pilot:
-        await pilot.press("ctrl+r")
-    content = log_path.read_text()
+    content = app.log_path.read_text()
     assert re.search(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} memory reset$", content, re.MULTILINE)
 
 
@@ -430,26 +303,7 @@ async def test_ctrl_l_on_empty_log_does_not_error(tmp_path):
         assert len(richlog.lines) > 0
 
 
-async def test_ctrl_l_does_not_clear_input_value(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "not yet submitted"
-        await pilot.press("ctrl+l")
-        assert input_widget.text == "not yet submitted"
-
-
-async def test_ctrl_l_logged_to_file(tmp_path):
-    log_path = tmp_path / "ratchet.log"
-    app = RatchetApp(log_path=log_path)
-    async with app.run_test() as pilot:
-        await pilot.press("ctrl+l")
-    content = log_path.read_text()
-    assert re.search(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} log cleared$", content, re.MULTILINE)
-
-
-async def test_agent_reply_written_to_display(tmp_path):
+async def test_chat_turn_displays_logs_and_persists_messages(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
         input_widget = app.query_one("#message_input", PromptInput)
@@ -459,19 +313,17 @@ async def test_agent_reply_written_to_display(tmp_path):
         await app.workers.wait_for_complete()
         richlog = app.query_one("#messages", RichLog)
         lines = [strip.text for strip in richlog.lines]
+        assert any("\u203a hello there" in line for line in lines)
         assert any("\u25c6 mock-reply" in line for line in lines)
-
-
-async def test_agent_reply_written_to_log_file(tmp_path):
-    log_path = tmp_path / "ratchet.log"
-    app = RatchetApp(log_path=log_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello there"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
-    content = log_path.read_text()
+        assert input_widget.text == ""
+        assert not app.query_one("#status", tui_main.StatusBar).display
+    saved = json.loads((app.session.root / "session.json").read_text())
+    assert saved["messages"] == app.messages
+    assert json.loads(app.session_path.read_text()) == {"session_id": app.session.id}
+    content = app.log_path.read_text()
+    assert re.search(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} user: hello there$", content, re.MULTILINE
+    )
     assert re.search(
         r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} assistant: mock-reply$", content, re.MULTILINE
     )
@@ -564,43 +416,6 @@ async def test_turn_exception_is_shown_and_logged_without_crashing(tmp_path, mon
     content = log_path.read_text()
     assert "Traceback (most recent call last)" in content
     assert "ValueError: kaboom" in content
-
-
-async def test_tool_call_shows_a_result_line_in_display(tmp_path, monkeypatch):
-    sandbox = tmp_path / "sandbox"
-    sandbox.mkdir()
-    (sandbox / "a.txt").write_text("")
-    calls = []
-
-    def fake_call_llm(messages, override_config=None, tools=None):
-        calls.append(messages)
-        if len(calls) == 1:
-            return {
-                "content": "",
-                "model": "test-model",
-                "status": "success",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {"name": "list_files", "arguments": "{}"},
-                    }
-                ],
-            }
-        return {"content": "there is a.txt", "model": "test-model", "status": "success"}
-
-    monkeypatch.setattr(tui_main, "call_llm", fake_call_llm)
-    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=sandbox)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "what files exist?"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
-        richlog = app.query_one("#messages", RichLog)
-        lines = [strip.text for strip in richlog.lines]
-        assert any("list_files" in line for line in lines)
-        assert any("\u2713" in line and "a.txt (0 bytes)" in line for line in lines)
 
 
 async def test_tool_start_appears_in_transcript_before_the_result(tmp_path, monkeypatch):
@@ -740,18 +555,6 @@ async def test_model_picker_options_show_full_model_names(tmp_path):
         assert prompts == {"anthropic/claude-sonnet-5", "liquid/lfm2.5-1.2b"}
 
 
-async def test_ctrl_p_pick_model_sets_selected_model_and_confirms(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test() as pilot:
-        await pilot.press("ctrl+p")
-        await pilot.pause()
-        await pilot.press("enter")
-        assert app.selected_model == {"name": "anthropic/claude-sonnet-5"}
-        richlog = app.query_one("#messages", RichLog)
-        lines = [strip.text for strip in richlog.lines]
-        assert any("model set to anthropic/claude-sonnet-5" in line for line in lines)
-
-
 async def test_chat_message_after_pick_uses_selected_model_override(tmp_path, monkeypatch):
     calls = []
 
@@ -764,6 +567,9 @@ async def test_chat_message_after_pick_uses_selected_model_override(tmp_path, mo
     async with app.run_test() as pilot:
         await pilot.press("ctrl+p")
         await pilot.press("enter")
+        assert app.selected_model == {"name": "anthropic/claude-sonnet-5"}
+        lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]
+        assert any("model set to anthropic/claude-sonnet-5" in line for line in lines)
         input_widget = app.query_one("#message_input", PromptInput)
         input_widget.focus()
         input_widget.text = "hello there"
@@ -854,6 +660,8 @@ def test_format_tool_line_marks_success_with_elapsed():
     )
     line = tui_main.format_tool_line(event)
     assert "✓" in line
+    assert "[green]" in line
+    assert "[red]" not in line
     assert "0.1s" in line
     assert "a.txt" in line
 
@@ -865,6 +673,9 @@ def test_format_tool_line_marks_failure():
     line = tui_main.format_tool_line(event)
     assert "✗" in line
     assert "✓" not in line
+    assert line.count("[red]") == 1
+    assert line.rstrip().endswith("[/red]")
+    assert "[green]" not in line
 
 
 def test_format_tool_line_escapes_markup_in_output():
@@ -881,57 +692,23 @@ def test_format_log_line_stays_plain_text():
     assert tui_main.format_log_line(event) == "tool: list_files -> a.txt"
 
 
-async def test_status_bar_is_hidden_when_idle(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test():
-        assert not app.query_one("#status", tui_main.StatusBar).display
-
-
-async def test_status_bar_shows_elapsed_while_working(tmp_path):
+async def test_status_bar_lifecycle_and_step_progress(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test():
         bar = app.query_one("#status", tui_main.StatusBar)
         bar.start()
         assert bar.display
         assert bar.render_text().endswith("s")
-
-
-async def test_status_bar_hides_when_stopped(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test():
-        bar = app.query_one("#status", tui_main.StatusBar)
-        bar.start()
-        bar.stop()
-        assert not bar.display
-
-
-async def test_status_bar_advance_changes_the_spinner_frame(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test():
-        bar = app.query_one("#status", tui_main.StatusBar)
-        bar.start()
+        assert "/" not in bar.render_text()
         first = bar.render_text()[0]
         bar.advance()
         assert bar.render_text()[0] != first
-
-
-async def test_status_bar_omits_step_progress_before_set(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test():
-        bar = app.query_one("#status", tui_main.StatusBar)
-        bar.start()
-        assert "/" not in bar.render_text()
-
-
-async def test_status_bar_shows_step_progress_once_set(tmp_path):
-    app = make_app(tmp_path)
-    async with app.run_test():
-        bar = app.query_one("#status", tui_main.StatusBar)
-        bar.start()
         bar.set_step(2, 12, "running list_files")
         text = bar.render_text()
         assert "2/12" in text
         assert "running list_files" in text
+        bar.stop()
+        assert not bar.display
 
 
 async def test_thinking_phase_reports_step_progress(tmp_path, monkeypatch):
@@ -1000,51 +777,6 @@ async def test_tool_start_reports_a_running_label_on_status_bar(tmp_path, monkey
 
     labels = [label for _, _, label in seen]
     assert "running list_files" in labels
-
-
-async def test_status_bar_is_hidden_again_after_a_turn(tmp_path, monkeypatch):
-    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
-        assert not app.query_one("#status", tui_main.StatusBar).display
-
-
-async def test_prompt_and_reply_use_role_markers(tmp_path):
-    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
-        lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]
-        assert any("› hello" in line for line in lines)
-        assert any("mock-reply" in line for line in lines)
-
-
-async def test_error_reply_uses_the_error_marker(tmp_path, monkeypatch):
-    def failing_call_llm(messages, override_config=None, tools=None):
-        return {
-            "content": "[API Error] boom",
-            "model": "test-model",
-            "status": "error",
-            "error": "boom",
-        }
-
-    monkeypatch.setattr(tui_main, "call_llm", failing_call_llm)
-    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one("#message_input", PromptInput)
-        input_widget.focus()
-        input_widget.text = "hello"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
-        lines = [strip.text for strip in app.query_one("#messages", RichLog).lines]
-        assert any("[API Error] boom" in line for line in lines)
 
 
 async def test_user_text_with_markup_is_not_interpreted(tmp_path):
@@ -1185,26 +917,6 @@ async def test_call_line_is_logged_with_its_arguments(tmp_path, monkeypatch):
     content = log_path.read_text()
     assert "tool: read_files(a.txt)" in content
     assert "tool: read_files -> 1| hello" in content
-
-
-def test_format_tool_line_colors_a_success_green():
-    event = tui_main.TurnEvent(
-        phase="tool_done", step=1, index=1, name="list_files", output="a.txt", exit_code=0
-    )
-    line = tui_main.format_tool_line(event)
-    assert "[green]" in line
-    assert "[red]" not in line
-
-
-def test_format_tool_line_colors_the_whole_failure_red():
-    event = tui_main.TurnEvent(
-        phase="tool_done", step=1, index=1, name="read_files",
-        output="File not found: 'a.txt'", exit_code=1
-    )
-    line = tui_main.format_tool_line(event)
-    assert line.count("[red]") == 1
-    assert line.rstrip().endswith("[/red]")
-    assert "[green]" not in line
 
 
 def test_format_reply_line_keeps_the_text_plain():

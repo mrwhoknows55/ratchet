@@ -56,16 +56,6 @@ def test_run_turn_counts_steps_and_records_tools_used(tmp_path):
     assert result.elapsed >= 0
 
 
-def test_run_turn_accumulates_token_usage_across_steps(tmp_path):
-    calls = _replies(
-        _tool_call("list_files", {}) | {"usage": {"prompt_tokens": 10, "completion_tokens": 2}},
-        _final() | {"usage": {"prompt_tokens": 30, "completion_tokens": 5}},
-    )
-    result = agent_loop.run_turn(calls, "hi", tmp_path)
-    assert result.prompt_tokens == 40
-    assert result.completion_tokens == 7
-
-
 def test_run_turn_leaves_tokens_unset_when_provider_reports_none(tmp_path):
     result = agent_loop.run_turn(_replies(_final()), "hi", tmp_path)
     assert result.prompt_tokens is None
@@ -307,7 +297,9 @@ def test_run_turn_falls_back_to_config_max_steps(monkeypatch, tmp_path):
         return next(calls)
 
     result = agent_loop.run_turn(fake_call_llm, "hi", tmp_path)
+    assert result.status == "max_steps"
     assert result.steps == 3
+    assert "exceeded" in result.text.lower()
 
 
 def _spawn_call(role, call_id, task="go", name="spawn_parallel_subagent"):

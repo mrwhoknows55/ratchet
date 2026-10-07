@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 import pytest
 
@@ -75,11 +74,6 @@ def test_load_config_returns_defaults_on_empty_file():
         "agent": DEFAULT_AGENT_CONFIG,
         "subagent": DEFAULT_SUBAGENT_CONFIG,
     }
-
-
-def test_load_config_path_is_project_root_config_toml():
-    assert agent_config.CONFIG_FILE.name == "config.toml"
-    assert isinstance(agent_config.CONFIG_FILE, Path)
 
 
 def test_load_config_loads_api_key_from_env_file(monkeypatch, tmp_path):

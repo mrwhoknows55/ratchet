@@ -34,24 +34,6 @@ def test_main_with_shell_and_prompt_runs_cli_shell_mode(monkeypatch):
     assert called == [("ls -a", "shell")]
 
 
-def test_run_cli_chat_prints_tool_chain_and_reply(monkeypatch, tmp_path, capsys):
-    def fake_run_agent_turn(
-        call_llm_fn, text, sandbox_root, override_config, on_event, messages,
-        plan_mode=False, ask_user=None, plan_root=None,
-    ):
-        on_event(
-            TurnEvent(phase="tool_start", step=1, name="read_file", arguments={"path": "a.txt"})
-        )
-        on_event(TurnEvent(phase="tool_end", step=1, name="read_file", output="hi", elapsed=0.2))
-        return "done"
-
-    monkeypatch.setattr(cli, "run_agent_turn", fake_run_agent_turn)
-    cli.run_cli("read a.txt", sandbox_root=tmp_path, session_path=tmp_path / "session.json")
-    out = capsys.readouterr().out
-    assert "read_file" in out
-    assert "done" in out
-
-
 def test_run_cli_chat_announces_a_tool_before_it_runs(monkeypatch, tmp_path, capsys):
     def fake_run_agent_turn(
         call_llm_fn, text, sandbox_root, override_config, on_event, messages,
@@ -67,6 +49,8 @@ def test_run_cli_chat_announces_a_tool_before_it_runs(monkeypatch, tmp_path, cap
     cli.run_cli("read a.txt", sandbox_root=tmp_path, session_path=tmp_path / "session.json")
     out = capsys.readouterr().out
     assert "running read_file" in out
+    assert "hi" in out
+    assert "done" in out
 
 
 def test_run_cli_chat_persists_session_across_calls(monkeypatch, tmp_path):

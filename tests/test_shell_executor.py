@@ -57,18 +57,13 @@ def test_run_command_empty_input(tmp_path):
     assert "Empty command" in result["stderr"]
 
 
-def test_run_command_runs_with_sandbox_root_as_cwd(tmp_path):
-    result = run_command("pwd", tmp_path)
-    assert result["exit_code"] == 0
-    assert result["stdout"].strip() == str(tmp_path.resolve())
-
-
 def test_run_command_creates_missing_sandbox_root(tmp_path):
     root = tmp_path / "sandbox"
     assert not root.exists()
     result = run_command("pwd", root)
     assert result["exit_code"] == 0
     assert root.is_dir()
+    assert result["stdout"].strip() == str(root.resolve())
 
 
 def test_check_command_found():
@@ -109,14 +104,6 @@ def test_list_files_empty_directory(tmp_path):
     assert result["stderr"] == ""
 
 
-def test_read_files_returns_contents(tmp_path):
-    (tmp_path / "a.txt").write_text("hello world")
-    result = read_files(tmp_path, "a.txt")
-    assert result["exit_code"] == 0
-    assert result["stdout"] == "1| hello world"
-    assert result["stderr"] == ""
-
-
 def test_read_files_missing_file(tmp_path):
     result = read_files(tmp_path, "missing.txt")
     assert result["exit_code"] == 1
@@ -135,19 +122,6 @@ def test_read_files_denies_parent_traversal(tmp_path):
     assert "Access Denied" in result["stderr"]
 
 
-def test_write_files_creates_file(tmp_path):
-    result = write_files(tmp_path, "a.txt", "hello world")
-    assert result["exit_code"] == 0
-    assert (tmp_path / "a.txt").read_text() == "hello world"
-
-
-def test_write_files_overwrites_existing_file(tmp_path):
-    (tmp_path / "a.txt").write_text("old")
-    result = write_files(tmp_path, "a.txt", "new")
-    assert result["exit_code"] == 0
-    assert (tmp_path / "a.txt").read_text() == "new"
-
-
 def test_write_files_creates_parent_directories(tmp_path):
     result = write_files(tmp_path, "sub/dir/a.txt", "hello")
     assert result["exit_code"] == 0
@@ -164,13 +138,6 @@ def test_write_files_denies_parent_traversal(tmp_path):
     result = write_files(tmp_path, "../secret.txt", "hello")
     assert result["exit_code"] == 1
     assert "Access Denied" in result["stderr"]
-
-
-def test_delete_file_removes_file(tmp_path):
-    (tmp_path / "a.txt").write_text("hello")
-    result = delete_file(tmp_path, "a.txt")
-    assert result["exit_code"] == 0
-    assert not (tmp_path / "a.txt").exists()
 
 
 def test_delete_file_missing_file(tmp_path):
@@ -213,13 +180,6 @@ def test_read_files_binary_file_returns_error_instead_of_raising(tmp_path):
     assert result["exit_code"] == 1
     assert result["stdout"] == ""
     assert "archive.tar" in result["stderr"]
-
-
-def test_replace_in_file_replaces_unique_match(tmp_path):
-    (tmp_path / "a.txt").write_text("alpha\nbeta\ngamma\n")
-    result = replace_in_file(tmp_path, "a.txt", "beta", "delta")
-    assert result["exit_code"] == 0
-    assert (tmp_path / "a.txt").read_text() == "alpha\ndelta\ngamma\n"
 
 
 def test_replace_in_file_matches_across_lines(tmp_path):
@@ -278,13 +238,9 @@ def _numbered_file(tmp_path, name, count):
 def test_read_files_numbers_lines(tmp_path):
     _numbered_file(tmp_path, "a.txt", 3)
     result = read_files(tmp_path, "a.txt")
+    assert result["exit_code"] == 0
+    assert result["stderr"] == ""
     assert result["stdout"] == "1| line 1\n2| line 2\n3| line 3"
-
-
-def test_read_files_under_cap_has_no_truncation_footer(tmp_path):
-    _numbered_file(tmp_path, "a.txt", 5)
-    result = read_files(tmp_path, "a.txt")
-    assert "truncated" not in result["stdout"]
 
 
 def test_read_files_truncates_at_cap_and_reports_total(tmp_path):
@@ -428,33 +384,33 @@ def test_file_search_truncates_long_result_list(tmp_path):
 
 def test_write_files_snapshots_the_previous_content(tmp_path):
     (tmp_path / "a.txt").write_text("v1")
-    write_files(tmp_path, "a.txt", "v2")
+    result = write_files(tmp_path, "a.txt", "v2")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "a.txt").read_text() == "v2"
     assert (tmp_path / BACKUP_DIR / "a.txt").read_text() == "v1"
 
 
 def test_write_files_takes_no_snapshot_for_a_new_file(tmp_path):
-    write_files(tmp_path, "a.txt", "v1")
+    result = write_files(tmp_path, "a.txt", "v1")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "a.txt").read_text() == "v1"
     assert not (tmp_path / BACKUP_DIR).exists()
 
 
 def test_replace_in_file_snapshots_the_previous_content(tmp_path):
     (tmp_path / "a.txt").write_text("hello world")
-    replace_in_file(tmp_path, "a.txt", "world", "there")
+    result = replace_in_file(tmp_path, "a.txt", "world", "there")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "a.txt").read_text() == "hello there"
     assert (tmp_path / BACKUP_DIR / "a.txt").read_text() == "hello world"
 
 
 def test_delete_file_snapshots_before_unlinking(tmp_path):
     (tmp_path / "a.txt").write_text("v1")
-    delete_file(tmp_path, "a.txt")
-    assert (tmp_path / BACKUP_DIR / "a.txt").read_text() == "v1"
-
-
-def test_rollback_file_restores_overwritten_content(tmp_path):
-    (tmp_path / "a.txt").write_text("v1")
-    write_files(tmp_path, "a.txt", "v2")
-    result = rollback_file(tmp_path, "a.txt")
+    result = delete_file(tmp_path, "a.txt")
     assert result["exit_code"] == 0
-    assert (tmp_path / "a.txt").read_text() == "v1"
+    assert not (tmp_path / "a.txt").exists()
+    assert (tmp_path / BACKUP_DIR / "a.txt").read_text() == "v1"
 
 
 def test_rollback_file_restores_a_deleted_nested_file(tmp_path):
@@ -470,7 +426,8 @@ def test_rollback_file_restores_only_the_most_recent_snapshot(tmp_path):
     (tmp_path / "a.txt").write_text("v1")
     write_files(tmp_path, "a.txt", "v2")
     write_files(tmp_path, "a.txt", "v3")
-    rollback_file(tmp_path, "a.txt")
+    result = rollback_file(tmp_path, "a.txt")
+    assert result["exit_code"] == 0
     assert (tmp_path / "a.txt").read_text() == "v2"
 
 
@@ -508,13 +465,6 @@ def test_search_files_skips_the_backup_directory(tmp_path):
     assert BACKUP_DIR not in result["stdout"]
 
 
-def test_append_file_adds_to_existing_content(tmp_path):
-    (tmp_path / "a.txt").write_text("line1\n")
-    result = append_file(tmp_path, "a.txt", "line2\n")
-    assert result["exit_code"] == 0
-    assert (tmp_path / "a.txt").read_text() == "line1\nline2\n"
-
-
 def test_append_file_creates_missing_file_and_parents(tmp_path):
     result = append_file(tmp_path, "sub/a.txt", "line1\n")
     assert result["exit_code"] == 0
@@ -523,7 +473,9 @@ def test_append_file_creates_missing_file_and_parents(tmp_path):
 
 def test_append_file_snapshots_existing_content(tmp_path):
     (tmp_path / "a.txt").write_text("line1\n")
-    append_file(tmp_path, "a.txt", "line2\n")
+    result = append_file(tmp_path, "a.txt", "line2\n")
+    assert result["exit_code"] == 0
+    assert (tmp_path / "a.txt").read_text() == "line1\nline2\n"
     assert (tmp_path / BACKUP_DIR / "a.txt").read_text() == "line1\n"
 
 
@@ -630,17 +582,10 @@ def test_resolve_path_accepts_a_directory_when_allowed(tmp_path):
 
 def test_copy_file_copies_a_file(tmp_path):
     (tmp_path / "a.txt").write_text("hello")
-    result = copy_file(tmp_path, "a.txt", "b.txt")
-    assert result["exit_code"] == 0
-    assert (tmp_path / "b.txt").read_text() == "hello"
-    assert (tmp_path / "a.txt").read_text() == "hello"
-
-
-def test_copy_file_creates_missing_parent_directories(tmp_path):
-    (tmp_path / "a.txt").write_text("hello")
     result = copy_file(tmp_path, "a.txt", "sub/nested/b.txt")
     assert result["exit_code"] == 0
     assert (tmp_path / "sub" / "nested" / "b.txt").read_text() == "hello"
+    assert (tmp_path / "a.txt").read_text() == "hello"
 
 
 def test_copy_file_copies_a_directory_tree(tmp_path):
