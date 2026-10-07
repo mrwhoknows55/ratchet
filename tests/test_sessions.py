@@ -6,9 +6,10 @@ from textual.containers import VerticalScroll
 
 from ratchet import cli
 from ratchet.agent.context import AgentContext
-from ratchet.agent.plan import create_plan, get_plan
+from ratchet.agent.plan import PLAN_MODE_NOTE, create_plan, get_plan
 from ratchet.agent.sessions import Session
 from ratchet.agent.tools import SYSTEM_PROMPT, execute_tool_result
+from ratchet.tui import main as tui_main
 from ratchet.tui.main import RatchetApp, StatusBar
 from ratchet.tui.tokens import TokenMeter
 
@@ -121,6 +122,29 @@ def test_cli_reset_cannot_resume_the_previous_plan(tmp_path, monkeypatch, flag):
     assert fresh.usage["session_tokens"] == 120
 
 
+def test_switch_points_active_pointer_at_existing_session(tmp_path):
+    pointer = tmp_path / "session.json"
+    first = Session.open(pointer, tmp_path)
+    first.messages.append({"role": "user", "content": "first"})
+    first.save()
+    pointer.unlink()
+    Session.open(pointer, tmp_path)
+    assert Session.switch(pointer, first.id) == first.id
+    resumed = Session.open(pointer, tmp_path)
+    assert resumed.id == first.id
+    assert {"role": "user", "content": "first"} in resumed.messages
+
+
+def test_switch_rejects_bad_uuid(tmp_path):
+    with pytest.raises(ValueError):
+        Session.switch(tmp_path / "session.json", "not-a-uuid")
+
+
+def test_switch_rejects_unknown_session(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        Session.switch(tmp_path / "session.json", "9a2854a8-9276-4543-8b93-da27eac57a9f")
+
+
 async def test_tui_resumes_saved_token_usage(tmp_path):
     session = Session.open(tmp_path / "session.json", tmp_path)
     session.usage = {"session_tokens": 500, "context_tokens": 120, "context_window": 1000}
@@ -130,3 +154,49 @@ async def test_tui_resumes_saved_token_usage(tmp_path):
         meter = app.query_one("#tokens", TokenMeter)
         assert "120 / 1,000" in meter.render_tokens().plain
         assert "session 500 tok" in meter.render_tokens().plain
+
+
+async def test_selected_session_restores_chat_and_saved_tool_results_without_replaying(
+    tmp_path, monkeypatch,
+):
+    pointer = tmp_path / "session.json"
+    previous = Session.open(pointer, tmp_path)
+    previous.messages = [
+        {"role": "system", "content": "Hidden system instructions"},
+        {"role": "user", "content": f"{PLAN_MODE_NOTE}\n\nDesign [red]division[/red]"},
+        {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "read", "type": "function", "function": {
+                "name": "read_files", "arguments": '{"path":"math_ops.py"}',
+            },
+        }]},
+        {"role": "tool", "tool_call_id": "read", "content": "1| def divide(a, b): return a / b"},
+        {"role": "assistant",
+         "content": "analysisPrivate reasoning.assistantfinalDivision inspected."},
+    ]
+    previous.save()
+    saved_before = (previous.root / "session.json").read_bytes()
+    other = Session.new(pointer)
+    other.messages.append({"role": "user", "content": "Other session request"})
+    other.save()
+    Session.switch(pointer, previous.id)
+
+    def unexpected_llm(*args, **kwargs):
+        raise AssertionError("Loading history must not invoke the model")
+
+    monkeypatch.setattr(tui_main, "call_llm", unexpected_llm)
+    app = RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
+    async with app.run_test():
+        transcript = "\n".join(
+            line.text for line in app.query_one("#messages", tui_main.RichLog).lines
+        )
+        expected = ["Design [red]division[/red]", "read_files (saved)",
+                    "def divide", "Division inspected."]
+        positions = [transcript.index(text) for text in expected]
+        assert positions == sorted(positions)
+        for hidden in ("Hidden system instructions", "[Plan mode]", "Private reasoning",
+                       "Other session request", "analysisPrivate"):
+            assert hidden not in transcript
+        assert app.messages == previous.messages
+        assert app.session.id == previous.id
+        assert "Design" not in app.log_path.read_text()
+    assert (previous.root / "session.json").read_bytes() == saved_before

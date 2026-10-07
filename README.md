@@ -134,6 +134,7 @@ Header: `Ratchet - <short sid> - <mode>`; footer shows shortcuts.
 and the active plan display; it is ignored while a turn is running.
 CLI reset flags discard the active-session pointer; the next turn creates a fresh session.
 Reopening resumes the active session, including its plan and token totals.
+`--session <uuid>` resumes a saved session and restores its chat and saved tool-result previews.
 Previous session folders remain on disk, while workspace files remain shared.
 Existing conversation files and their workspace plan migrate together once.
 Workspace plans without saved conversation history are not adopted by a fresh session.

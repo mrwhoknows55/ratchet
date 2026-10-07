@@ -22,7 +22,8 @@ from ratchet.agent.config import load_config
 from ratchet.agent.events import TurnEvent
 from ratchet.agent.loop import DEFAULT_MAX_STEPS, run_agent_turn
 from ratchet.agent.models import load_supported_models
-from ratchet.agent.plan import PLAN_JSON_FILE, get_plan
+from ratchet.agent.plan import PLAN_JSON_FILE, PLAN_MODE_NOTE, get_plan
+from ratchet.agent.responses import normalize_message
 from ratchet.agent.sessions import Session
 from ratchet.agent.subagent import normalize_role
 from ratchet.agent.tools import SYSTEM_PROMPT as SYSTEM_PROMPT
@@ -568,7 +569,38 @@ class RatchetApp(App):
             message = f"model: {model_name}"
             self.query_one("#messages", RichLog).write(f"[dim]{escape(message)}[/dim]")
             self._write_log(message)
+            self._restore_chat_history()
         self.query_one("#message_input", PromptInput).focus()
+
+    def _restore_chat_history(self) -> None:
+        view = self.query_one("#messages", RichLog)
+        tools = {}
+        for message in self.messages:
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            if role == "assistant" and message.get("tool_calls"):
+                for call in message["tool_calls"]:
+                    tools[call["id"]] = call["function"]["name"]
+                continue
+            content = message.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            if role == "user":
+                panel = format_prompt_panel(content.removeprefix(f"{PLAN_MODE_NOTE}\n\n"))
+            elif role == "assistant":
+                result = normalize_message(message, None)
+                if result["status"] != "success" or not result["content"].strip():
+                    continue
+                panel = format_reply_panel(result["content"])
+            elif role == "tool":
+                name = tools.get(message.get("tool_call_id"), "Tool")
+                body = "\n".join([summarize_result(name, content), *output_preview_lines(content)])
+                panel = Panel(Text(body), title=Text(f"{name} (saved)"),
+                              border_style="dim", expand=False)
+            else:
+                continue
+            view.write(panel)
 
     def on_unmount(self) -> None:
         if self._question_future is not None and not self._question_future.done():

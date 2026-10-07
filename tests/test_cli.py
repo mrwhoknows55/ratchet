@@ -4,6 +4,7 @@ import pytest
 
 from ratchet import cli
 from ratchet.agent.events import TurnEvent
+from ratchet.agent.sessions import Session
 
 
 def test_main_with_no_args_runs_chat_mode(monkeypatch):
@@ -268,6 +269,47 @@ def test_cli_question_reprompts_blank_and_invalid_choice(monkeypatch):
     replies = iter([" ", "9", "1"])
     monkeypatch.setattr("builtins.input", lambda *args: next(replies))
     assert cli.ask_user_question("Storage?", ["SQLite"]) == "SQLite"
+
+
+def test_main_with_session_flag_resumes_that_session(monkeypatch, tmp_path):
+    pointer = tmp_path / "session.json"
+    previous = Session.open(pointer, tmp_path)
+    previous.messages.append({"role": "user", "content": "earlier"})
+    previous.save()
+    pointer.unlink()
+    other = Session.open(pointer, tmp_path)
+    assert other.id != previous.id
+    monkeypatch.setattr(cli, "DEFAULT_SESSION_PATH", pointer)
+    called = []
+    monkeypatch.setattr(
+        cli, "run_cli", lambda prompt, mode, plan_mode=False: called.append((prompt, mode))
+    )
+    cli.main(["--session", previous.id, "hello"])
+    assert called == [("hello", "chat")]
+    assert json.loads(pointer.read_text())["session_id"] == previous.id
+
+
+def test_main_with_session_flag_rejects_unknown_uuid(monkeypatch, tmp_path, capsys):
+    pointer = tmp_path / "session.json"
+    monkeypatch.setattr(cli, "DEFAULT_SESSION_PATH", pointer)
+    ran = []
+    monkeypatch.setattr(cli, "run_cli", lambda *args, **kwargs: ran.append(True))
+    monkeypatch.setattr(cli, "run_tui", lambda mode: ran.append(True))
+    cli.main(["--session", "9a2854a8-9276-4543-8b93-da27eac57a9f", "hello"])
+    assert ran == []
+    assert "unknown session" in capsys.readouterr().out.lower()
+
+
+def test_session_flag_without_prompt_opens_the_selected_chat(monkeypatch, tmp_path):
+    pointer = tmp_path / "session.json"
+    previous = Session.open(pointer, tmp_path)
+    Session.new(pointer)
+    monkeypatch.setattr(cli, "DEFAULT_SESSION_PATH", pointer)
+    opened = []
+    monkeypatch.setattr(cli, "run_tui", lambda mode:
+                        opened.append((mode, Session.open(pointer, tmp_path).id)))
+    cli.main(["--session", previous.id])
+    assert opened == [("chat", previous.id)]
 
 
 def test_cli_question_handles_end_of_input(monkeypatch):

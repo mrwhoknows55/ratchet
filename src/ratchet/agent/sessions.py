@@ -26,6 +26,14 @@ class Session:
         self.path.write_text(json.dumps({"session_id": self.id}), encoding="utf-8")
 
     @classmethod
+    def switch(cls, path: Path, session_id: str) -> str:
+        normalized = str(UUID(session_id.strip()))
+        if not (path.parent / "sessions" / normalized / "session.json").is_file():
+            raise FileNotFoundError(f"unknown session: {normalized}")
+        path.write_text(json.dumps({"session_id": normalized}), encoding="utf-8")
+        return normalized
+
+    @classmethod
     def new(cls, path: Path) -> "Session":
         session = cls(path, str(uuid4()), [{"role": "system", "content": SYSTEM_PROMPT}])
         session.save()

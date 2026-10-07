@@ -6,7 +6,7 @@ api_key = "not-needed"
 timeout = 40
 
 [agent]
-max_steps = 20
+max_steps = 100
 command_timeout = 120
 
 [subagent]

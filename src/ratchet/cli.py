@@ -118,6 +118,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--new", "--clear", "--reset", dest="reset_session", action="store_true"
     )
+    parser.add_argument("--session", dest="session_id", default=None)
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--execute-plan", action="store_true")
     parser.add_argument("args", nargs="*", metavar="[shell] [prompt ...]")
@@ -132,6 +133,19 @@ def main(argv: list[str] | None = None) -> None:
     prompt = " ".join(args).strip()
     if parsed.execute_plan:
         prompt = f"{EXECUTE_PLAN_PROMPT}\n\n{prompt}".strip()
+
+    if parsed.session_id:
+        if parsed.reset_session:
+            Console().print("[bold red]--session cannot be used with --reset.[/bold red]")
+            return
+        try:
+            Session.switch(DEFAULT_SESSION_PATH, parsed.session_id)
+        except ValueError:
+            Console().print(f"[bold red]Invalid session id: {parsed.session_id}[/bold red]")
+            return
+        except FileNotFoundError:
+            Console().print(f"[bold red]Unknown session: {parsed.session_id}[/bold red]")
+            return
 
     if parsed.reset_session:
         clear_session(DEFAULT_SESSION_PATH)
