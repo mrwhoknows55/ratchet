@@ -115,6 +115,41 @@ def test_run_turn_reports_error_status_when_the_llm_fails(tmp_path):
     assert "Offline" in result.text
 
 
+def test_invalid_response_is_retried_once_without_polluting_history(tmp_path):
+    seen = []
+    history = []
+
+    def fake_llm(messages, override_config=None, tools=None):
+        seen.append(list(messages))
+        if len(seen) == 1:
+            return {"status": "invalid_response", "content": "[Error] malformed model output",
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 20}}
+        assert any("structured tool_calls" in m["content"] for m in messages)
+        return _final("Recovered", usage={"prompt_tokens": 110, "completion_tokens": 10})
+
+    result = agent_loop.run_turn(fake_llm, "inspect", tmp_path, messages=history)
+    assert result.status == "ok"
+    assert result.text == "Recovered"
+    assert len(seen) == 2
+    assert result.prompt_tokens == 210
+    assert result.completion_tokens == 30
+    assert history == [{"role": "user", "content": "inspect"},
+                       {"role": "assistant", "content": "Recovered"}]
+
+
+def test_repeated_invalid_responses_stop_after_one_retry(tmp_path):
+    seen = []
+
+    def fake_llm(messages, override_config=None, tools=None):
+        seen.append(list(messages))
+        return {"status": "invalid_response", "content": "[Error] malformed model output"}
+
+    result = agent_loop.run_turn(fake_llm, "inspect", tmp_path)
+    assert result.status == "error"
+    assert len(seen) == 2
+    assert result.text == "[Error] malformed model output"
+
+
 def test_malformed_tool_arguments_are_reported_back_to_the_model(tmp_path):
     bad_call = _tool_call("read_files", {})
     bad_call["tool_calls"][0]["function"]["arguments"] = '{"path": "a.txt"'

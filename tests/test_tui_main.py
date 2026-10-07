@@ -330,7 +330,9 @@ async def test_turn_saves_session_to_disk(tmp_path):
         await pilot.press("enter")
         await app.workers.wait_for_complete()
 
-    assert json.loads(app.session_path.read_text()) == app.messages
+    saved = json.loads((app.session.root / "session.json").read_text())
+    assert saved["messages"] == app.messages
+    assert json.loads(app.session_path.read_text()) == {"session_id": app.session.id}
 
 
 async def test_app_loads_existing_session_on_mount(tmp_path):
@@ -372,7 +374,7 @@ async def test_ctrl_r_resets_conversation_memory(tmp_path):
         assert app.messages == [{"role": "system", "content": tui_main.SYSTEM_PROMPT}]
 
 
-async def test_ctrl_r_clears_session_file(tmp_path):
+async def test_ctrl_r_replaces_active_session_with_empty_history(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
         input_widget = app.query_one("#message_input", PromptInput)
@@ -381,8 +383,11 @@ async def test_ctrl_r_clears_session_file(tmp_path):
         await pilot.press("enter")
         await app.workers.wait_for_complete()
         assert app.session_path.exists()
+        previous_id = app.session.id
         await pilot.press("ctrl+r")
-        assert not app.session_path.exists()
+        assert app.session.id != previous_id
+        saved = json.loads((app.session.root / "session.json").read_text())
+        assert saved["messages"] == [{"role": "system", "content": tui_main.SYSTEM_PROMPT}]
 
 
 async def test_ctrl_r_clears_the_message_log_and_shows_an_ack(tmp_path):

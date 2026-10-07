@@ -9,12 +9,8 @@ from ratchet.agent.client import call_llm
 from ratchet.agent.events import TurnEvent
 from ratchet.agent.loop import run_agent_turn
 from ratchet.agent.plan import EXECUTE_PLAN_PROMPT
-from ratchet.agent.tools import (
-    SYSTEM_PROMPT,
-    clear_session,
-    load_session,
-    save_session,
-)
+from ratchet.agent.sessions import Session
+from ratchet.agent.tools import clear_session
 from ratchet.shell.executor import run_command
 from ratchet.tui.main import (
     SPAWN_TOOLS,
@@ -72,10 +68,17 @@ def run_cli(
         reply = f"{output} [exit {result['exit_code']}]"
     else:
         path = session_path or DEFAULT_SESSION_PATH
-        messages = load_session(path) or [{"role": "system", "content": SYSTEM_PROMPT}]
+        session = Session.open(path, root)
+        messages = session.messages
 
         def on_event(event: TurnEvent) -> None:
-            if event.phase in {"thinking", "usage"}:
+            if event.phase == "usage":
+                used = (event.prompt_tokens or 0) + (event.completion_tokens or 0)
+                session.usage["session_tokens"] = (session.usage.get("session_tokens") or 0) + used
+                if event.depth == 0:
+                    session.usage.update(context_tokens=used, context_window=event.context_window)
+                return
+            if event.phase == "thinking":
                 return
             if event.phase == "tool_start":
                 if event.name in SPAWN_TOOLS and not event.depth:
@@ -88,7 +91,7 @@ def run_cli(
             if event.name in SPAWN_TOOLS and not event.depth:
                 console.print(format_delegation_footer(event))
                 return
-            plan_card = plan_panel_for_event(event, root)
+            plan_card = plan_panel_for_event(event, session.root)
             if plan_card is not None:
                 console.print(plan_card)
                 return
@@ -99,8 +102,9 @@ def run_cli(
         reply = run_agent_turn(
             call_llm, prompt, root, None, on_event, messages, plan_mode=plan_mode,
             ask_user=ask_user_question,
+            plan_root=session.root,
         )
-        save_session(messages, path)
+        session.save()
 
     console.print(format_error_panel(reply) if reply.startswith("[") else format_reply_panel(reply))
 

@@ -470,7 +470,8 @@ TOOL_SCHEMAS = [
             "name": "create_plan",
             "description": (
                 f"Save a structured plan to {PLAN_FILE} and {PLAN_JSON_FILE}, "
-                "replacing any earlier plan."
+                "outside the workspace for this session. "
+                "Replaces its previous plan; inspect with get_plan."
             ),
             "parameters": {
                 "type": "object",
@@ -688,16 +689,16 @@ def _dispatch(name: str, arguments: dict, ctx: AgentContext) -> dict[str, str | 
         result = check_command(arguments["name"])
     elif name == "create_plan":
         result = create_plan(
-            sandbox_root, arguments.get("title", ""), arguments.get("steps", []),
+            ctx.plan_root or sandbox_root, arguments.get("title", ""), arguments.get("steps", []),
             arguments.get("summary", ""), arguments.get("risks", []),
         )
     elif name == "get_plan":
-        result = get_plan(sandbox_root)
+        result = get_plan(ctx.plan_root or sandbox_root)
     elif name == "ask_user_question":
         result = ask_user_question(ctx, arguments.get("question", ""), arguments.get("options"))
     elif name == "update_plan_step":
         result = update_plan_step(
-            sandbox_root, arguments.get("step_id"), arguments.get("status"),
+            ctx.plan_root or sandbox_root, arguments.get("step_id"), arguments.get("status"),
             arguments.get("notes"),
         )
     elif name in ("spawn_subagent", "spawn_parallel_subagent"):

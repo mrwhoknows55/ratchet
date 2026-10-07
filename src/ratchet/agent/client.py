@@ -3,6 +3,7 @@ import os
 import httpx
 
 from ratchet.agent.config import load_config
+from ratchet.agent.responses import normalize_message
 
 _transport: httpx.BaseTransport | None = None
 
@@ -71,11 +72,7 @@ def call_llm(
             response.raise_for_status()
             data = response.json()
             message = data["choices"][0]["message"]
-            content = message["content"] or ""
-            result = {"content": content, "model": model_name, "status": "success"}
-            tool_calls = message.get("tool_calls")
-            if tool_calls:
-                result["tool_calls"] = tool_calls
+            result = {"model": model_name, **normalize_message(message, tools)}
             usage = data.get("usage")
             if usage:
                 result["usage"] = {

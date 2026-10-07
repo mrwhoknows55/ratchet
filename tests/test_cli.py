@@ -37,7 +37,7 @@ def test_main_with_shell_and_prompt_runs_cli_shell_mode(monkeypatch):
 def test_run_cli_chat_prints_tool_chain_and_reply(monkeypatch, tmp_path, capsys):
     def fake_run_agent_turn(
         call_llm_fn, text, sandbox_root, override_config, on_event, messages,
-        plan_mode=False, ask_user=None,
+        plan_mode=False, ask_user=None, plan_root=None,
     ):
         on_event(
             TurnEvent(phase="tool_start", step=1, name="read_file", arguments={"path": "a.txt"})
@@ -55,7 +55,7 @@ def test_run_cli_chat_prints_tool_chain_and_reply(monkeypatch, tmp_path, capsys)
 def test_run_cli_chat_announces_a_tool_before_it_runs(monkeypatch, tmp_path, capsys):
     def fake_run_agent_turn(
         call_llm_fn, text, sandbox_root, override_config, on_event, messages,
-        plan_mode=False, ask_user=None,
+        plan_mode=False, ask_user=None, plan_root=None,
     ):
         on_event(
             TurnEvent(phase="tool_start", step=1, name="read_file", arguments={"path": "a.txt"})
@@ -74,7 +74,7 @@ def test_run_cli_chat_persists_session_across_calls(monkeypatch, tmp_path):
 
     def fake_run_agent_turn(
         call_llm_fn, text, sandbox_root, override_config, on_event, messages,
-        plan_mode=False, ask_user=None,
+        plan_mode=False, ask_user=None, plan_root=None,
     ):
         calls.append(list(messages))
         messages.append({"role": "user", "content": text})
@@ -142,7 +142,7 @@ def test_run_cli_shell_prints_output_and_exit_code(monkeypatch, tmp_path, capsys
 def test_run_cli_chat_indents_nested_subagent_calls(monkeypatch, tmp_path, capsys):
     def fake_run_agent_turn(
         call_llm_fn, text, sandbox_root, override_config, on_event, messages,
-        plan_mode=False, ask_user=None,
+        plan_mode=False, ask_user=None, plan_root=None,
     ):
         on_event(
             TurnEvent(
@@ -171,7 +171,7 @@ def test_run_cli_chat_frames_a_delegation_with_a_header_and_footer(monkeypatch, 
 
     def fake_run_agent_turn(
         call_llm_fn, text, sandbox_root, override_config, on_event, messages,
-        plan_mode=False, ask_user=None,
+        plan_mode=False, ask_user=None, plan_root=None,
     ):
         args = {"task": "which file mentions retry", "role": "researcher"}
         on_event(
@@ -199,7 +199,7 @@ def test_run_cli_chat_frames_a_delegation_with_a_header_and_footer(monkeypatch, 
 def test_run_cli_chat_previews_nested_tool_output(monkeypatch, tmp_path, capsys):
     def fake_run_agent_turn(
         call_llm_fn, text, sandbox_root, override_config, on_event, messages,
-        plan_mode=False, ask_user=None,
+        plan_mode=False, ask_user=None, plan_root=None,
     ):
         on_event(
             TurnEvent(
@@ -241,7 +241,7 @@ def test_run_cli_passes_plan_mode_to_the_agent_turn(monkeypatch, tmp_path):
 
     def fake_run_agent_turn(
         call_llm_fn, text, sandbox_root, override_config, on_event, messages,
-        plan_mode=False, ask_user=None,
+        plan_mode=False, ask_user=None, plan_root=None,
     ):
         seen.append(plan_mode)
         return "planned"
@@ -273,7 +273,7 @@ def test_cli_question_answer_is_returned_to_agent_and_persisted(
     session = tmp_path / "session.json"
     cli.run_cli("plan storage", sandbox_root=tmp_path, session_path=session, plan_mode=True)
     assert answers == [{"question": "Which storage?", "answer": expected}]
-    saved = json.loads(session.read_text())
+    saved = cli.Session.open(session, tmp_path).messages
     assert any(m.get("role") == "tool" and expected in m["content"] for m in saved)
     output = capsys.readouterr().out
     assert "Which storage?" in output

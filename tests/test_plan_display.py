@@ -7,6 +7,7 @@ from textual.widgets import RichLog, Static
 from ratchet import cli
 from ratchet.agent.events import TurnEvent
 from ratchet.agent.plan import create_plan, get_plan
+from ratchet.agent.sessions import Session
 from ratchet.agent.tools import execute_tool_result
 from ratchet.tui import main as tui_main
 
@@ -63,8 +64,9 @@ def test_cli_prints_plan_cards_after_creation_and_status_updates(tmp_path, monke
 
 
 async def test_tui_restores_existing_plan_progress_at_startup(tmp_path):
-    create_plan(tmp_path, "Math", ["Implement", "Test"])
-    execute_tool_result("update_plan_step", {"step_id": 1, "status": "completed"}, tmp_path)
+    session = Session.open(tmp_path / "session.json", tmp_path)
+    create_plan(session.root, "Math", ["Implement", "Test"])
+    execute_tool_result("update_plan_step", {"step_id": 1, "status": "completed"}, session.root)
     app = tui_main.RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
     async with app.run_test():
         assert app.query_one("#active_plan", VerticalScroll).display
@@ -123,7 +125,7 @@ async def test_tui_plan_tools_refresh_sidebar_and_emit_progress_cards(tmp_path, 
             ("create_plan", {"title": "Math", "steps": ["Implement", "Test"]}),
             ("update_plan_step", {"step_id": 1, "status": "completed"}),
         ]:
-            output, code = execute_tool_result(name, arguments, tmp_path)
+            output, code = execute_tool_result(name, arguments, app.session.root)
             app._on_turn_event(TurnEvent(
                 phase="tool_done", step=1, index=1, name=name, output=output, exit_code=code,
                 depth=depth, agent="planner" if depth else "",
@@ -138,7 +140,7 @@ async def test_tui_plan_tools_refresh_sidebar_and_emit_progress_cards(tmp_path, 
         assert "Math" in transcript
         before = body
         output, code = execute_tool_result(
-            "update_plan_step", {"step_id": 9, "status": "completed"}, tmp_path
+            "update_plan_step", {"step_id": 9, "status": "completed"}, app.session.root
         )
         app._on_turn_event(TurnEvent(
             phase="tool_done", step=2, name="update_plan_step", output=output, exit_code=code,
@@ -148,7 +150,8 @@ async def test_tui_plan_tools_refresh_sidebar_and_emit_progress_cards(tmp_path, 
 
 
 async def test_tui_corrupt_plan_is_reported_without_false_progress(tmp_path):
-    (tmp_path / "PLAN.json").write_text("{broken")
+    session = Session.open(tmp_path / "session.json", tmp_path)
+    (session.root / "PLAN.json").write_text("{broken")
     app = tui_main.RatchetApp(log_path=tmp_path / "ratchet.log", sandbox_root=tmp_path)
     async with app.run_test():
         assert app.query_one("#active_plan", VerticalScroll).display

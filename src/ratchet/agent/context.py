@@ -15,6 +15,7 @@ class AgentContext:
     plan_mode: bool = False
     allowed_tools: frozenset[str] | None = None
     ask_user: QuestionHandler | None = None
+    plan_root: Path | None = None
 
 
 def as_context(value: "AgentContext | Path") -> "AgentContext":

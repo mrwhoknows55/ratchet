@@ -168,6 +168,7 @@ def spawn_subagent(
         agent=role_name,
         plan_mode=ctx.plan_mode or role_name == "planner",
         ask_user=ctx.ask_user,
+        plan_root=ctx.plan_root,
     )
 
     meta = _metadata_line(role_name, result, budget)

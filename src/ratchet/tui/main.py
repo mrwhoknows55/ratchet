@@ -23,13 +23,9 @@ from ratchet.agent.events import TurnEvent
 from ratchet.agent.loop import DEFAULT_MAX_STEPS, run_agent_turn
 from ratchet.agent.models import load_supported_models
 from ratchet.agent.plan import PLAN_JSON_FILE, get_plan
+from ratchet.agent.sessions import Session
 from ratchet.agent.subagent import normalize_role
-from ratchet.agent.tools import (
-    SYSTEM_PROMPT,
-    clear_session,
-    load_session,
-    save_session,
-)
+from ratchet.agent.tools import SYSTEM_PROMPT as SYSTEM_PROMPT
 from ratchet.shell.executor import run_command
 from ratchet.tui.tokens import TokenMeter
 
@@ -535,9 +531,8 @@ class RatchetApp(App):
         self._question_lock = asyncio.Lock()
         self._question_future: asyncio.Future | None = None
         self._parent_step = 0
-        self.messages: list[dict] = load_session(self.session_path) or [
-            {"role": "system", "content": SYSTEM_PROMPT}
-        ]
+        self.session = Session.open(self.session_path, self.sandbox_root)
+        self.messages = self.session.messages
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -557,6 +552,10 @@ class RatchetApp(App):
         meter = self.query_one("#tokens", TokenMeter)
         meter.display = self.mode != "shell"
         meter.reset_context(load_config().get("model", {}).get("context_window"))
+        meter.session_tokens = self.session.usage.get("session_tokens")
+        meter.context_tokens = self.session.usage.get("context_tokens")
+        meter.context_window = self.session.usage.get("context_window", meter.context_window)
+        meter.update(meter.render_tokens())
         if self.mode != "shell":
             model_name = load_config().get("model", {}).get("name", "unknown")
             message = f"model: {model_name}"
@@ -599,12 +598,19 @@ class RatchetApp(App):
                     lambda event: self.call_from_thread(self._on_turn_event, event),
                     self.messages,
                     plan_mode=self.plan_mode,
+                    plan_root=self.session.root,
                     ask_user=lambda question, options: self.call_from_thread(
                         self._ask_user_question, question, options
                     ),
                 )
                 log_message = f"assistant: {reply}"
-                await asyncio.to_thread(save_session, self.messages, self.session_path)
+                meter = self.query_one("#tokens", TokenMeter)
+                self.session.usage = {
+                    "session_tokens": meter.session_tokens,
+                    "context_tokens": meter.context_tokens,
+                    "context_window": meter.context_window,
+                }
+                await asyncio.to_thread(self.session.save)
         except Exception as e:
             reply = f"[Error] {type(e).__name__}: {e}"
             log_message = f"error: {traceback.format_exc().rstrip()}"
@@ -637,11 +643,11 @@ class RatchetApp(App):
             view.display = False
             return
         if card is None:
-            result = get_plan(self.sandbox_root)
+            result = get_plan(self.session.root)
             if result["exit_code"] == 0:
                 card = format_plan_panel(json.loads(result["stdout"]))
             else:
-                path = self.sandbox_root / PLAN_JSON_FILE
+                path = self.session.root / PLAN_JSON_FILE
                 if path.exists() or path.is_symlink():
                     content.update(Panel(
                         Text(f"Cannot load active plan\n{result['stderr']}"), border_style="red"
@@ -679,7 +685,7 @@ class RatchetApp(App):
             self._write_log(format_call_log_line(event))
             return
         status.set_step(self._parent_step, max_steps)
-        plan_card = plan_panel_for_event(event, self.sandbox_root)
+        plan_card = plan_panel_for_event(event, self.session.root)
         if plan_card is not None:
             self._refresh_active_plan(plan_card)
             messages_widget.write(plan_card)
@@ -704,11 +710,14 @@ class RatchetApp(App):
         self._write_log("log cleared")
 
     def action_reset_memory(self) -> None:
+        if self.query_one("#status", StatusBar).display:
+            return
         messages_widget = self.query_one("#messages", RichLog)
         messages_widget.clear()
-        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        clear_session(self.session_path)
+        self.session = Session.new(self.session_path)
+        self.messages = self.session.messages
         self.query_one("#tokens", TokenMeter).reset_session()
+        self._refresh_active_plan()
         messages_widget.write(format_ack_panel("Memory reset."))
         self._write_log("memory reset")
 

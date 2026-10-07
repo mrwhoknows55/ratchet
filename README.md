@@ -108,7 +108,9 @@ uv run ratchet "list the files"
 uv run ratchet shell "ls"
 ```
 
-Headless mode persists conversation memory across process calls, to `log/session.json`:
+Headless mode persists conversation memory across process calls.
+`log/session.json` points to the active UUID session in `log/sessions/<uuid>/`.
+Each session stores its conversation, token usage, and plan separately.
 
 ```
 uv run ratchet "My name is Sam."
@@ -122,8 +124,24 @@ uv run ratchet --reset
 ```
 
 Plan mode allows inspection and plan creation, while blocking workspace edits and commands.
-Plans are saved inside the sandbox as `PLAN.json` and a readable `PLAN.md` checklist.
+Plans are saved inside the active session as `PLAN.json` and a readable `PLAN.md` checklist.
 Toggle it in the TUI with `Ctrl+B`.
+
+`Ctrl+R` creates a fresh UUID session and immediately clears memory, token totals,
+and the active plan display; it is ignored while a turn is running.
+CLI reset flags discard the active-session pointer; the next turn creates a fresh session.
+Reopening resumes the active session, including its plan and token totals.
+Previous session folders remain on disk, while workspace files remain shared.
+Existing conversation files and their workspace plan migrate together once.
+Workspace plans without saved conversation history are not adopted by a fresh session.
+
+Known GPT-OSS channel markup in response content is normalized before reaching the UI.
+Final answers are separated from reasoning, and valid embedded tool calls are recovered
+using only the currently offered tools and their required arguments.
+Recovered calls follow the normal permission checks, including plan-mode restrictions.
+Native structured tool calls take priority, preventing duplicate execution.
+Unreadable or reasoning-only responses receive one repair attempt before returning an error.
+Malformed output and leaked reasoning are not added to conversation history.
 
 The TUI token meter shows the latest parent request's prompt plus output tokens
 against the context window, with a usage bar and percentage.

@@ -16,6 +16,7 @@ from ratchet.agent.plan import (
     get_plan,
     plan_mode_schemas,
 )
+from ratchet.agent.responses import REPAIR_NOTE
 from ratchet.agent.subagent import PARALLEL_SPAWN_TOOL, max_parallel
 from ratchet.agent.tools import SYSTEM_PROMPT, TOOL_SCHEMAS, execute_tool_result
 
@@ -120,6 +121,7 @@ def run_turn(
     agent: str = "",
     plan_mode: bool = False,
     ask_user: QuestionHandler | None = None,
+    plan_root: Path | None = None,
 ) -> TurnResult:
     if messages is None:
         messages = [{"role": "system", "content": system_prompt or SYSTEM_PROMPT}]
@@ -138,7 +140,7 @@ def run_turn(
     elif depth == 0:
         tool_names = {schema["function"]["name"] for schema in tools_schema}
         if {"get_plan", "update_plan_step"} <= tool_names:
-            execution_note = get_plan(sandbox_root)["exit_code"] == 0
+            execution_note = get_plan(plan_root or sandbox_root)["exit_code"] == 0
     messages.append({"role": "user", "content": user_text})
 
     ctx = AgentContext(
@@ -150,6 +152,7 @@ def run_turn(
         plan_mode=plan_mode,
         allowed_tools=frozenset(schema["function"]["name"] for schema in tools_schema),
         ask_user=ask_user,
+        plan_root=plan_root,
     )
     started = time.monotonic()
     tools_used: list[str] = []
@@ -157,6 +160,7 @@ def run_turn(
     completion_tokens: int | None = None
     index = 0
     step = 0
+    repaired_response = False
 
     for step in range(1, max_steps + 1):
         if on_event:
@@ -164,6 +168,8 @@ def run_turn(
         request_messages = messages
         if execution_note:
             request_messages = [{"role": "system", "content": PLAN_EXECUTION_NOTE}, *messages]
+        if repaired_response:
+            request_messages = [{"role": "system", "content": REPAIR_NOTE}, *request_messages]
         result = call_llm_fn(request_messages, override_config, tools=tools_schema)
 
         usage = result.get("usage")
@@ -177,6 +183,10 @@ def run_turn(
                     completion_tokens=usage.get("completion_tokens", 0),
                     context_window=result.get("context_window"),
                 ))
+
+        if result["status"] == "invalid_response" and not repaired_response:
+            repaired_response = True
+            continue
 
         if result["status"] != "success":
             return TurnResult(
@@ -271,6 +281,7 @@ def run_agent_turn(
     plan_mode: bool = False,
     *,
     ask_user: QuestionHandler | None = None,
+    plan_root: Path | None = None,
 ) -> str:
     return run_turn(
         call_llm_fn,
@@ -281,4 +292,5 @@ def run_agent_turn(
         messages,
         plan_mode=plan_mode,
         ask_user=ask_user,
+        plan_root=plan_root,
     ).text

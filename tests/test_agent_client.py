@@ -304,3 +304,168 @@ def test_changing_models_does_not_inherit_the_previous_context_window(monkeypatc
     result = agent_client.call_llm([{"role": "user", "content": "hi"}], override)
     assert result["model"] == "second"
     assert "context_window" not in result
+
+
+@pytest.mark.parametrize("content", [
+    'analysisWe need to inspect it.assistantcommentary to=functions.read_files '
+    'json{"path": "math_ops.py"}',
+    'analysisWe need to inspect it.assistantanalysis to=functions.read_files '
+    'code{"path": "math_ops.py"}',
+    '<|channel|>analysis<|message|>Private reasoning.<|end|>'
+    '<|start|>assistant<|channel|>commentary to=functions.read_files '
+    '<|constrain|>json<|message|>{"path": "math_ops.py"}<|call|>',
+    '<|im_start|>assistant to=functions.read_files<|meta_sep|>commentary'
+    '<|im_sep|>{"path": "math_ops.py"}<|ghissue|>',
+])
+def test_raw_channel_tool_calls_are_recovered_without_leaking_reasoning(monkeypatch, content):
+    import json
+
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(lambda request:
+        httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+    ))
+    tools = [{"type": "function", "function": {"name": "read_files"}}]
+    result = agent_client.call_llm([{"role": "user", "content": "inspect"}], tools=tools)
+    assert result["status"] == "success"
+    assert result["content"] == ""
+    call = result["tool_calls"][0]
+    assert call["id"]
+    assert call["type"] == "function"
+    assert call["function"]["name"] == "read_files"
+    assert json.loads(call["function"]["arguments"]) == {"path": "math_ops.py"}
+
+
+def test_multiple_raw_calls_preserve_json_strings_and_order(monkeypatch):
+    import json
+
+    arguments = {"path": "a.txt", "content": 'assistantfinal <|im_end|> {"nested": true}'}
+    content = (
+        "analysisPrivate reasoning.assistantcommentary to=functions.write_files json"
+        + json.dumps(arguments)
+        + 'assistantcommentary to=functions.read_files json{"path": "a.txt"}'
+    )
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(lambda request:
+        httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+    ))
+    tools = [{"type": "function", "function": {"name": name}}
+             for name in ("write_files", "read_files")]
+    result = agent_client.call_llm([], tools=tools)
+    calls = result["tool_calls"]
+    assert [call["function"]["name"] for call in calls] == ["write_files", "read_files"]
+    assert calls[0]["id"] != calls[1]["id"]
+    assert json.loads(calls[0]["function"]["arguments"]) == arguments
+
+
+@pytest.mark.parametrize("content", [
+    "analysisPrivate reasoning.assistantfinalThe plan is ready.",
+    '<|im_start|>assistant<|meta_sep|>analysis<|im_sep|>Private reasoning.<|im_end|>'
+    '<|im_start|>assistant<|meta_sep|>final<|im_sep|>The plan is ready.<|fim_suffix|>',
+])
+def test_raw_final_channel_is_extracted_without_reasoning(monkeypatch, content):
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(lambda request:
+        httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+    ))
+    result = agent_client.call_llm([])
+    assert result["status"] == "success"
+    assert result["content"] == "The plan is ready."
+    assert "tool_calls" not in result
+
+
+@pytest.mark.parametrize("content", [
+    'analysisPrivate reasoning.assistantcommentary to=functions.read_files json{"path":',
+    'analysisPrivate reasoning.assistantcommentary to=functions.unavailable json{}',
+    'analysisPrivate reasoning.assistantcommentary to=functions.read_files json[]',
+    'analysisPrivate reasoning.assistantcommentary to=functions.read_files json{} trailing junk',
+    'analysisPrivate reasoning.assistantcommentary to=functions.read_files json{"path":"a.py"}'
+    'assistantcommentary to=functions.read_files json{"path":',
+    'analysisPrivate reasoning.assistantfinal to=functions.read_files json{"path":"a.py"}',
+    "analysisPrivate reasoning without a final answer.",
+])
+def test_unreadable_raw_responses_request_repair_without_exposing_content(monkeypatch, content):
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(lambda request:
+        httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+    ))
+    tools = [{"type": "function", "function": {"name": "read_files"}}]
+    result = agent_client.call_llm([], tools=tools)
+    assert result["status"] == "invalid_response"
+    assert "Private reasoning" not in result["content"]
+    assert "tool_calls" not in result
+
+
+def test_raw_final_answer_preserves_a_leading_json_word(monkeypatch):
+    content = "analysisPrivate reasoning.assistantfinaljson is the requested format."
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(lambda request:
+        httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+    ))
+    result = agent_client.call_llm([])
+    assert result["content"] == "json is the requested format."
+
+
+def test_reasoning_only_response_requests_repair(monkeypatch):
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(lambda request:
+        httpx.Response(200, json={"choices": [{"message": {
+            "content": None, "reasoning": "Private reasoning without a final answer.",
+        }}]})
+    ))
+    result = agent_client.call_llm([])
+    assert result["status"] == "invalid_response"
+    assert "Private reasoning" not in result["content"]
+
+
+def test_recovery_does_not_invent_missing_required_arguments(monkeypatch):
+    content = 'analysisPrivate reasoning.assistantcommentary to=functions.read_files json{}'
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(lambda request:
+        httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+    ))
+    tools = [{"type": "function", "function": {"name": "read_files",
+              "parameters": {"required": ["path"]}}}]
+    result = agent_client.call_llm([], tools=tools)
+    assert result["status"] == "invalid_response"
+    assert "tool_calls" not in result
+
+
+def test_native_tool_calls_take_priority_over_leaked_text(monkeypatch):
+    native = [{"id": "native", "type": "function", "function": {
+        "name": "list_files", "arguments": "{}",
+    }}]
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(lambda request:
+        httpx.Response(200, json={"choices": [{"message": {
+            "content": "analysisPrivate reasoning.", "tool_calls": native,
+        }}]})
+    ))
+    result = agent_client.call_llm([])
+    assert result["tool_calls"] == native
+    assert result["content"] == ""
+
+
+def test_normal_text_explaining_channel_markup_is_preserved(monkeypatch):
+    content = 'The string "analysisWe" and "assistantcommentary to=functions.read_files" is markup.'
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(lambda request:
+        httpx.Response(200, json={"choices": [{"message": {"content": content,
+            "reasoning": "Private reasoning in its proper field."}}]})
+    ))
+    result = agent_client.call_llm([])
+    assert result["content"] == content
+    assert result["status"] == "success"
+
+
+def test_recovered_call_runs_through_the_real_loop_and_permissions(tmp_path, monkeypatch):
+    from ratchet.agent.loop import run_turn
+
+    (tmp_path / "math_ops.py").write_text("def divide(a, b): return a / b")
+    responses = iter([
+        'analysisPrivate reasoning.assistantcommentary to=functions.read_files '
+        'json{"path":"math_ops.py"}',
+        "analysisPrivate reasoning.assistantfinalInspected the division function.",
+    ])
+    monkeypatch.setattr(agent_client, "_transport", _mock_transport(lambda request:
+        httpx.Response(200, json={"choices": [{"message": {"content": next(responses)}}]})
+    ))
+    history = []
+    events = []
+    result = run_turn(agent_client.call_llm, "inspect division", tmp_path,
+                      messages=history, on_event=events.append, plan_mode=True)
+    assert result.status == "ok"
+    assert result.text == "Inspected the division function."
+    assert result.tools_used == ["read_files"]
+    assert any("def divide" in m["content"] for m in history if m["role"] == "tool")
+    assert all("Private reasoning" not in m["content"] for m in history)
